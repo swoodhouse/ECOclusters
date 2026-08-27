@@ -1,102 +1,165 @@
-def report_clusters_entiretree(
-    pdf_tacc_node_connectivity: pd.DataFrame,
-    tacc_names_in_order: ty.List[str],
-    pdf_tacc_tcrs: pd.DataFrame,
-) -> pd.DataFrame:
+import logging
+import typing as ty
+from typing import Any, Callable, List, Optional
+
+import numpy as np
+import numpy.typing as npt
+import pandas as pd
+import scipy.cluster.hierarchy as hc
+import scipy.spatial as sp
+from pyspark.sql import SparkSession
+from pyspark.sql.dataframe import DataFrame
+from scipy.sparse import csr_matrix, identity, triu
+from scipy.stats import percentileofscore
+
+from immunopipeline.ecocluster._ecocluster_access import EcoclusterLoader
+from immunopipeline.hla import clean_allele
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_MIN_MEMBERS: int = 1
+# this is just a meaninglessly high number. It's a count of TACCs, not TCRs.
+DEFAULT_MAX_MEMBERS: int = 20000
+
+# Default maximum mean TACCs per HLA when creating new clusters.
+# Setting this to an impossibly high number so that no splitting is done.
+DEFAULT_MAX_MEAN_TACCS_PER_HLA_FORCREATE: float = 1000.0
+# Default maximum mean TACCs per HLA when splitting clusters.
+DEFAULT_MAX_MEAN_TACCS_PER_HLA_FORSPLIT: float = 1.5
+
+
+def sparse_map_nonzero(m: csr_matrix, f: Callable[[Any], Any]) -> csr_matrix:  # type: ignore
     """
-    Walk up the agglomerativeclustering tree and report the clusters at every
-    node.
+    Map a function over the (nonzero only!) elements of a sparse CSR matrix.
+
+    This function will leave zero entries unchanged. This is useful for e.g. computation of 1 / x
+    where we want to define 1 / x as 1 if x == 0. Does not require the matrix to be densified.
+
+    If you want to also transform zero entries, you will need to densify your matrix first
+    and use numpy operations.
 
     Args:
-        pdf_tacc_node_connectivity (pd.DataFrame): dataframe describing the clustering tree
-        pdf_tacc_tcrs:
-        tacc_names_in_order (List(str)): list of tacc names in order
+        m (csr_matrix): sparse CSR matrix to transform.
+        f (Callable[[Any], Any]): should take a 1-D numpy array and return array of same size and
+            dtype.
 
     Returns:
-        pd.DataFrame: clusters all through the tree
+        csr_matrix: m transformed by mapping f over each element.
     """
+    return csr_matrix((f(m.data), m.indices, m.indptr), shape=m.shape, dtype=m.dtype)
 
-    cluster_distance_threshold = None
 
-    # combine all the child nodes together and figure out which ones are bioids and samples
-    n_leaf_nodes = len(tacc_names_in_order)
+def masked_correlation(  # type:ignore
+    mx: csr_matrix,
+    mask: csr_matrix,
+) -> csr_matrix:
+    """
+    Efficient vectorized implementation of masked correlation.
 
-    # retain the full connectivity dataframe in _all
-    pdf_tacc_node_connectivity_all = pdf_tacc_node_connectivity
+    Args:
+        mx (csr_matrix): samples X features sparse matrix.
+        mask (csr_matrix): sample-feature mask.
 
-    # count members in each cluster
-    # cluster_nbioids_map = dict(zip(*[pdf_tacc_tcrs.cluster, pdf_tacc_tcrs.n_bioids]))
-    col_to_count = "tacc" if "tacc" in pdf_tacc_tcrs.columns else "cluster"
-    cluster_membercounts = pdf_tacc_tcrs[col_to_count].value_counts()
-    cluster_membercount_map = dict(zip(*[cluster_membercounts.index, cluster_membercounts]))
+    Returns:
+        csr_matrix: Upper triangular sparse CSR matrix of correlation coefficents.
+    """
+    print("masked_correlation")
+    print(f"mx:shape: {mx.shape}, mask.shape: {mask.shape}")
+    masked = mx.multiply(mask).tocsr()
+    print(f"masked.shaped: {masked.shape}")
 
-    # initialize the lists that will become result columns.
-    # seed with n_leaf_node dummy rows so that indexes match up
-    clusters_at_idxs = [[tacc_name] for tacc_name in tacc_names_in_order]
-    bioid_counts = [cluster_membercount_map[cluster] for cluster in tacc_names_in_order]
-    distances = [0] * n_leaf_nodes
-    child_1_idxs = [-1] * n_leaf_nodes
-    child_2_idxs = [-1] * n_leaf_nodes
+    print("1")
+    sum_ij = triu(masked.T @ masked, k=1).tocsr()
+    print(f"sum_ij.shape: {sum_ij.shape}")
+    sum_i = triu(masked.T @ mask, k=1).tocsr()
+    print(f"sum_i.shape: {sum_i.shape}")
+    sum_j = triu(mask.T @ masked, k=1).tocsr()
+    print(f"sum_j.shape: {sum_j.shape}")
+    print("2")
+    sum_i_sum_j = sum_i.multiply(sum_j).tocsr()
+    print(f"sum_i.shape: {sum_i.shape}")
+    common_inv = triu(mask.T @ mask, k=1).tocsr()
+    print(f"common_inv.shape: {common_inv.shape}")
+    print("3")
+    common_inv = sparse_map_nonzero(common_inv, lambda d: 1.0 / d)
+    print(f"common_inv.shape: {common_inv.shape}")
 
-    for _, row in pdf_tacc_node_connectivity.iterrows():
-        # lists holding all the _1 and _2 children, respectively,
-        # because I write those out
-        distance = row["distance"]
-        if cluster_distance_threshold is not None and distance > cluster_distance_threshold:
-            break
-        cluster_tacc_lists_bothcols = []
-        n_bioids = 0
-        for col in ["child_1", "child_2"]:
-            cluster_idx = int(row[col])
-            if cluster_idx > len(clusters_at_idxs) - 1:
-                logger.warning(
-                    f"Fail! cluster_idx={cluster_idx}, clusters: {len(clusters_at_idxs)}"
-                )
-            this_bioid_list = clusters_at_idxs[cluster_idx]
-            cluster_tacc_lists_bothcols.append(this_bioid_list)
-            if col == "child_1":
-                child_1_idxs.append(cluster_idx)
-            else:
-                child_2_idxs.append(cluster_idx)
-            n_bioids += bioid_counts[cluster_idx]
+    print("4")
 
-        cluster_child1_taccs, cluster_child2_taccs = cluster_tacc_lists_bothcols
+    numer = sum_ij - sum_i_sum_j.multiply(common_inv)
+    print(f"numer.shape: {numer.shape}")
+    masked_2 = masked.multiply(masked)
+    print(f"masked_2.shape: {masked_2.shape}")
+    sum_i2 = triu(masked_2.T @ mask, k=1).tocsr()
+    print(f"sum_i2.shape: {sum_i2.shape}")
+    logger.info("5")
+    sum_j2 = triu(mask.T @ masked_2, k=1).tocsr()
+    print(f"sum_j2.shape: {sum_j2.shape}")
+    sum2_i = sum_i.multiply(sum_i)
+    print(f"sum2_i.shape: {sum2_i.shape}")
+    sum2_j = sum_j.multiply(sum_j)
+    print(f"sum2_j.shape: {sum2_j.shape}")
+    print("6")
 
-        # hold all the taccs in this cluster
-        this_cluster_taccs = cluster_child1_taccs + cluster_child2_taccs
-
-        bioid_counts.append(n_bioids)
-        distances.append(distance)
-        clusters_at_idxs.append(this_cluster_taccs)
-
-    # make the clusters dataframe with everything
-    pdf_clusters_distances = pd.DataFrame(
-        {
-            "cluster_members": clusters_at_idxs,
-            "n_taccs": [len(x) for x in clusters_at_idxs],
-            "n_bioids": bioid_counts,
-            "distance": distances,
-            "tree_idx": range(len(clusters_at_idxs)),
-            "child_1_idx": child_1_idxs,
-            "child_2_idx": child_2_idxs,
-        }
+    denom = np.sqrt(
+        (sum_i2 - sum2_i.multiply(common_inv)).multiply(sum_j2 - sum2_j.multiply(common_inv))
     )
+    print("7")
+    corr = numer.multiply(sparse_map_nonzero(denom, lambda d: 1.0 / d))
 
-    # throw out everything over the distance threshold
-    if cluster_distance_threshold is not None:
-        pdf_clusters_distances = pdf_clusters_distances[
-            pdf_clusters_distances.distance < cluster_distance_threshold
-        ]
-        logger.debug(
-            f"    distance threshold: {cluster_distance_threshold}, tree size: {len(pdf_clusters_distances)}"
-        )
+    print(f"masked.T @ masked shape: {(masked.T @ masked).shape}")
 
-    # Calculate all distances as percentiles of the full distance distribution
-    pdf_clusters_distances["distance_percentile"] = percentileofscore(
-        pdf_tacc_node_connectivity_all.distance, pdf_clusters_distances.distance
-    )
+    return corr
 
-    return pdf_clusters_distances
+
+# REWRITE THIS. the mask could just use get_imputed_indiciator_vector
+def build_tacc_mask(metas: pd.DataFrame, tacc_names: List[str]) -> List[npt.NDArray[np.int_]]:
+    """
+    Returns a sample by tacc mask. 1 means this sample has the HLA corresponding to this TACC, 0
+    means it does not.
+
+    Args:
+        metas (pd.DataFrame): Samples data frame containing x_inferred_hla_class_i and
+            x_inferred_hla_class_ii for samples we building mask for.
+        tacc_names (ty.List[str]): list of TACCs, in 'feature0_A_01_01' format. HLA for TACC is
+            extracted from its name.
+
+    Returns:
+        ty.List[npt.NDArray[np.int_]]: len(taccs) list of len(metas) numpy array of int.
+    """
+    # this code is brittle. and also slow. nested for loops in python is not a good idea
+    logger.info("build_tacc_mask")
+    # hlas = set([t[t.index('_')+1:] for t in tacc_names])
+    for tacc in tacc_names:
+        if "+" in tacc or ":" in tacc or "*" in tacc or "-" not in tacc:
+            raise ValueError("TACCs have incorrect format!")
+
+    hlas = set([t.split("-")[1] for t in tacc_names])
+    logger.info(hlas)
+
+    mask_hlas = dict()
+    for h in hlas:
+        mask = [0] * len(metas)
+
+        for i in range(len(metas)):
+            meta_hlas = str(metas.x_inferred_hla_class_i.tolist()[i]).split(",") + str(
+                metas.x_inferred_hla_class_ii.tolist()[i]
+            ).split(",")
+            meta_hlas = [clean_allele(h) for h in meta_hlas]
+
+            if h in meta_hlas:
+                mask[i] = 1
+
+        mask_hlas[h] = np.array(mask)
+
+    mask_taccs = []
+
+    for t in tacc_names:
+        # hla = t[t.index('_')+1:]
+        hla = t.split("-")[1]
+        mask_taccs.append(mask_hlas[hla])
+
+    return csr_matrix(np.stack(mask_taccs, axis=0)).T  # stack axis = 1 instead?
 
 
 class EcoclusterConstructor:
@@ -253,3 +316,126 @@ class EcoclusterConstructor:
             ["ecocluster"] + [c for c in pdf_ecocluster_tcrs.columns if c != "ecocluster"]
         ]
         return pdf_ecocluster_tcrs
+
+
+def sparse_map_nonzero(m: csr_matrix, f: ty.Callable[[ty.Any], ty.Any]) -> csr_matrix:  # type: ignore
+    """
+    Map a function over the (nonzero only!) elements of a sparse CSR matrix.
+
+    This function will leave zero entries unchanged. This is useful for e.g. computation of 1 / x
+    where we want to define 1 / x as 1 if x == 0. Does not require the matrix to be densified.
+
+    If you want to also transform zero entries, you will need to densify your matrix first
+    and use numpy operations.
+
+    Args:
+        m (csr_matrix): sparse CSR matrix to transform.
+        f (Callable[[Any], Any]): should take a 1-D numpy array and return array of same size and
+            dtype.
+
+    Returns:
+        csr_matrix: m transformed by mapping f over each element.
+    """
+    return csr_matrix((f(m.data), m.indices, m.indptr), shape=m.shape, dtype=m.dtype)
+
+
+
+def report_clusters_entiretree(
+    pdf_tacc_node_connectivity: pd.DataFrame,
+    tacc_names_in_order: ty.List[str],
+    pdf_tacc_tcrs: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Walk up the agglomerativeclustering tree and report the clusters at every
+    node.
+
+    Args:
+        pdf_tacc_node_connectivity (pd.DataFrame): dataframe describing the clustering tree
+        pdf_tacc_tcrs:
+        tacc_names_in_order (List(str)): list of tacc names in order
+
+    Returns:
+        pd.DataFrame: clusters all through the tree
+    """
+
+    cluster_distance_threshold = None
+
+    # combine all the child nodes together and figure out which ones are bioids and samples
+    n_leaf_nodes = len(tacc_names_in_order)
+
+    # retain the full connectivity dataframe in _all
+    pdf_tacc_node_connectivity_all = pdf_tacc_node_connectivity
+
+    # count members in each cluster
+    # cluster_nbioids_map = dict(zip(*[pdf_tacc_tcrs.cluster, pdf_tacc_tcrs.n_bioids]))
+    col_to_count = "tacc" if "tacc" in pdf_tacc_tcrs.columns else "cluster"
+    cluster_membercounts = pdf_tacc_tcrs[col_to_count].value_counts()
+    cluster_membercount_map = dict(zip(*[cluster_membercounts.index, cluster_membercounts]))
+
+    # initialize the lists that will become result columns.
+    # seed with n_leaf_node dummy rows so that indexes match up
+    clusters_at_idxs = [[tacc_name] for tacc_name in tacc_names_in_order]
+    bioid_counts = [cluster_membercount_map[cluster] for cluster in tacc_names_in_order]
+    distances = [0] * n_leaf_nodes
+    child_1_idxs = [-1] * n_leaf_nodes
+    child_2_idxs = [-1] * n_leaf_nodes
+
+    for _, row in pdf_tacc_node_connectivity.iterrows():
+        # lists holding all the _1 and _2 children, respectively,
+        # because I write those out
+        distance = row["distance"]
+        if cluster_distance_threshold is not None and distance > cluster_distance_threshold:
+            break
+        cluster_tacc_lists_bothcols = []
+        n_bioids = 0
+        for col in ["child_1", "child_2"]:
+            cluster_idx = int(row[col])
+            if cluster_idx > len(clusters_at_idxs) - 1:
+                logger.warning(
+                    f"Fail! cluster_idx={cluster_idx}, clusters: {len(clusters_at_idxs)}"
+                )
+            this_bioid_list = clusters_at_idxs[cluster_idx]
+            cluster_tacc_lists_bothcols.append(this_bioid_list)
+            if col == "child_1":
+                child_1_idxs.append(cluster_idx)
+            else:
+                child_2_idxs.append(cluster_idx)
+            n_bioids += bioid_counts[cluster_idx]
+
+        cluster_child1_taccs, cluster_child2_taccs = cluster_tacc_lists_bothcols
+
+        # hold all the taccs in this cluster
+        this_cluster_taccs = cluster_child1_taccs + cluster_child2_taccs
+
+        bioid_counts.append(n_bioids)
+        distances.append(distance)
+        clusters_at_idxs.append(this_cluster_taccs)
+
+    # make the clusters dataframe with everything
+    pdf_clusters_distances = pd.DataFrame(
+        {
+            "cluster_members": clusters_at_idxs,
+            "n_taccs": [len(x) for x in clusters_at_idxs],
+            "n_bioids": bioid_counts,
+            "distance": distances,
+            "tree_idx": range(len(clusters_at_idxs)),
+            "child_1_idx": child_1_idxs,
+            "child_2_idx": child_2_idxs,
+        }
+    )
+
+    # throw out everything over the distance threshold
+    if cluster_distance_threshold is not None:
+        pdf_clusters_distances = pdf_clusters_distances[
+            pdf_clusters_distances.distance < cluster_distance_threshold
+        ]
+        logger.debug(
+            f"    distance threshold: {cluster_distance_threshold}, tree size: {len(pdf_clusters_distances)}"
+        )
+
+    # Calculate all distances as percentiles of the full distance distribution
+    pdf_clusters_distances["distance_percentile"] = percentileofscore(
+        pdf_tacc_node_connectivity_all.distance, pdf_clusters_distances.distance
+    )
+
+    return pdf_clusters_distances

@@ -1,21 +1,19 @@
 import logging
 import typing as ty
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-import scipy.cluster.hierarchy as hc
-import scipy.spatial as sp
-from pyspark.sql import SparkSession
-from pyspark.sql.dataframe import DataFrame
-from scipy.sparse import csr_matrix, identity, triu
+from scipy.sparse import csr_matrix, triu
 from scipy.stats import percentileofscore
 
-from immunopipeline.ecocluster._ecocluster_access import EcoclusterLoader
-from immunopipeline.hla import clean_allele
 
 logger = logging.getLogger(__name__)
+
+def clean_allele(allele: str) -> str:
+    """Cleans an HLA allele string by replacing '*' and ':' with '_'."""
+    return allele.replace('*', '_').replace(':', '_')
 
 
 def sparse_map_nonzero(m: csr_matrix, f: Callable[[Any], Any]) -> csr_matrix:  # type: ignore

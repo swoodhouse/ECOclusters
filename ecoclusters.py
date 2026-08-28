@@ -25,7 +25,8 @@ from ecoclusters_extras import (
     EcoclusterConstructor,
     sparse_map_nonzero,
     masked_correlation,
-    build_hlacocluster_mask
+    build_hlacocluster_mask,
+    clean_allele
 )
 
 from scipy.stats import percentileofscore

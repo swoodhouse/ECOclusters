@@ -17,6 +17,7 @@ from pyspark.sql.types import (
     StructType,
     ArrayType,
 )
+from ecocluster_extras import clean_allele
 
 logger = logging.getLogger(__name__)
 

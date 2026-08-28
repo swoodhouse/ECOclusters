@@ -1,6 +1,5 @@
 import os
 import pathlib
-import sys
 
 def _install_pyximport():
     # Make sure build artifacts go somewhere writable/persistent-ish.
@@ -36,7 +35,6 @@ def _import_exact_linkage_cython():
     Import the compiled Cython module, building it on first import.
     """
     try:
-        #from . import exact_linkage_cython  # type: ignore
         from .exact_linkage_cython import nn_chain
         return nn_chain
     except ImportError:

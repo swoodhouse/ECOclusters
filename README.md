@@ -8,9 +8,9 @@ An ECOcluster is a group of T-cell receptors (TCRs) that tend to co-occur in the
 
 This repo provides the algorithm implementations used to build ECOclusters from TCR repertoire data:
 
-- [`taccs.py`](taccs.py) — construction of TCR Antigen-specific Correlated Clusters (TACCs), the building blocks that ECOclusters are assembled from, via biclustering and dimensionality reduction (SVD, UMAP, HDBSCAN) of TCR co-occurrence across repertoires.
-- [`ecoclusters.py`](ecoclusters.py) — the core ECOcluster construction pipeline: TACC co-occurrence and correlation matrices, hierarchical clustering of TACCs into a clustering tree, and the elbow-cutting procedure used to call ECOclusters from that tree.
-- [`ecoclusters_extras.py`](ecoclusters_extras.py) — supporting utilities for the pipeline above, including masked correlation, TACC masking, and cluster reporting.
+- [`hlacoclusters.py`](hlacoclusters.py) — construction of HLA-COclusters, the building blocks that ECOclusters are assembled from, via biclustering and dimensionality reduction (SVD, UMAP, HDBSCAN) of TCR co-occurrence across the repertoires of donors inferred to carry a given HLA allele.
+- [`ecoclusters.py`](ecoclusters.py) — the core ECOcluster construction pipeline: HLA-COcluster co-occurrence and correlation matrices, hierarchical clustering of HLA-COclusters into a clustering tree, and the elbow-cutting procedure used to call ECOclusters from that tree.
+- [`ecoclusters_extras.py`](ecoclusters_extras.py) — supporting utilities for the pipeline above, including masked correlation, HLA-COcluster masking, and cluster reporting.
 - [`exact_linkage.py`](exact_linkage.py) / [`exact_linkage_cython.pyx`](exact_linkage_cython.pyx) — exact nearest-neighbor-chain hierarchical linkage used in ECOcluster construction, implemented in Cython for speed and built on first import via `pyximport`.
 
 Together, these implement all of the algorithms used to construct ECOclusters as described in the manuscript.

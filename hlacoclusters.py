@@ -9,22 +9,19 @@ from sklearn.utils.validation import assert_all_finite
 from hdbscan import HDBSCAN
 import umap
 from pyspark.sql import DataFrame
-import pyspark.sql.functions as F
 import scipy.sparse as sparse
 
 from pyspark.sql.types import (
-    LongType,
     StringType,
     StructField,
     StructType,
-    IntegerType,
-    FloatType,
     ArrayType,
 )
+from ecocluster_extras import clean_allele
 
 logger = logging.getLogger(__name__)
 
-V8_HLA_ALLELES_WITH_TACCS = [
+V8_HLA_ALLELES_WITH_HLACOCLUSTERS = [
     'A*01:01',
     'A*02:01',
     'A*02:02',
@@ -240,30 +237,27 @@ def svd(array, n_components, n_discard):
     return u, vt.T
 
 
-class ClusterTACCs(ISparkDatasetJob):  ## YES!
+class ClusterHlaCoclusters(ISparkDatasetJob):  ## YES!
     description = """
-    For a specific allele, build TACCs from HLAdb v8. Clustering is done in driver node,
+    For a specific allele, build HLA-COclusters from HLAdb v8. Clustering is done in driver node,
     so large number of executors is not required.
     """
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     n_svd_components = 150
     n_umap_components = 15
     hdbscan_min_samples = 10
     hdbscan_min_cluster_size = 10
     min_tcrs_per_cluster = 5
-    bimodal_vgenes = ['TCRBV04-03', 'TCRBV06-02/06-03', 'TCRBV07-02', 'TCRBV28-01', 'TCRBV30-01']  # probably move to a global function in hladb file
     fdr_cutoff = 1e-3
 
     schema = StructType([
-        StructField('tacc', StringType(), True),
+        StructField('hlacocluster', StringType(), True),
         StructField('hla', StringType(), True),
         StructField('members', ArrayType(StringType()), True),
     ])
 
-    def __init__(self, allele: str, filter_bimodal_vgenes_tcrs: bool) -> None:
+    def __init__(self, allele: str) -> None:
         self.allele = allele
-        self.filter_bimodal_vgenes_tcrs = filter_bimodal_vgenes_tcrs
 
         super().__init__()
 
@@ -295,9 +289,6 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
         )
 
     def output(self) -> str:
-        if self.filter_bimodal_vgenes_tcrs:
-            return f"taccs.hladb-v8-{clean_allele(self.allele)}-filter-bimodal-vgenes-fdr-{self.fdr_cutoff}.parquet"
-
         return f"taccs.hladb-v8-{clean_allele(self.allele)}-fdr-{self.fdr_cutoff}.parquet"
 
     def get_counts(
@@ -320,17 +311,6 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
 
         )
         X_count_matrix = X_count_matrix.tocsr()  # type:ignore
-
-        if self.filter_bimodal_vgenes_tcrs:
-            logger.info(f"Filtering on {self.bimodal_vgenes}")
-
-            bioid_idx, bioids = zip(*[
-                (i, b) for i, b in enumerate(bioids) if not any(v in b for v in self.bimodal_vgenes)
-            ])
-            bioid_idx = list(bioid_idx)  # type:ignore
-            bioids = list(bioids)  # type:ignore
-
-            X_count_matrix = X_count_matrix[:, bioid_idx + [X_count_matrix.shape[1] - 1] ].tocsr()  # keep last column (UPR count)
 
         samples_to_cluster = list(
             set(hla_counted_sample_names).intersection(set(pdf_sample_hlas.name))
@@ -386,7 +366,6 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
 
         logger.info(f"X_mayhave_noseq_reps: {X_count_matrix.shape}")
 
-        # is this needed?
         has_any_topk_seqs = (X_mayhave_noseq_reps.sum(axis=1) > 0)
         if len(has_any_topk_seqs.shape) > 1:
             logger.info(f"len(has_any_topk_seqs.shape): {len(has_any_topk_seqs.shape)}")
@@ -411,7 +390,7 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
 
         return X_count_matrix, bioids, samples_to_cluster
 
-    def cluster_taccs(
+    def cluster_hlacoclusters(
         self,
         X_count_matrix: sparse.csr_matrix,
         bioids: List[str],
@@ -444,7 +423,7 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
             if len(iii) >= self.min_tcrs_per_cluster:
                 bioid_clusters.append([str(esi) for esi in bioids[iii]])
 
-        logger.info("cluster_taccs() complete")
+        logger.info("cluster_hlacoclusters() complete")
         return bioid_clusters
 
     def name_cluster(self, i: int) -> str:
@@ -460,8 +439,8 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
         X_count_matrix, bioids, hla_counted_sample_names = self.hla_restrict_countmatrix_bioids(
             X_count_matrix, X_hla[:, hla_index], bioids, hla_counted_sample_names)
 
-        logger.info("Calling cluster_taccs...")
-        bioid_clusters = self.cluster_taccs(
+        logger.info("Calling cluster_hlacoclusters...")
+        bioid_clusters = self.cluster_hlacoclusters(
             X_count_matrix,
             bioids,
         )
@@ -474,7 +453,7 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
 
         clusters = spark.createDataFrame(
             pd.DataFrame.from_dict({  # type: ignore
-                "tacc": cluster_names,
+                "hlacocluster": cluster_names,
                 "hla": self.allele,
                 "members": bioid_clusters,
             })

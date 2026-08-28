@@ -10,7 +10,7 @@ from pyspark.sql import SparkSession
 
 
 def get_imputed_HLA_indicator_vector(
-    class_i_list: List[str], class_ii_list: List[str], HLA_list: Union[None, List[str]] = None
+    class_i_list: List[str], class_ii_list: List[str], HLA_list: Union[None, List[str]]
 ) -> Tuple[np.ndarray, Dict[str, int]]:  # type:ignore[type-arg]
     """
     For a given list of imputed HLAs, generate an indicator vector for each sample
@@ -23,9 +23,6 @@ def get_imputed_HLA_indicator_vector(
     :return: X_hla is the indicator vector, hla_dict is the dictionary where each HLA is the key
             and the index in X_hla is the value
     """
-    model_hlas = RUO_V1_HLAs()
-    if HLA_list is None:
-        HLA_list = model_hlas.hlas()  ### THIS WILL FAIL W/O MORE CARVEOUT FROM IMMUNO*
     hla_dict = {hla_i: i for i, hla_i in enumerate(HLA_list)}
     HLA_indicator_out = []
     for ci, cii in zip(class_i_list, class_ii_list):

@@ -18,6 +18,7 @@ from pyspark.sql.types import (
     ArrayType,
 )
 from ecocluster_extras import clean_allele
+from imputed_hla_utils import get_imputed_HLA_indicator_vector
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +323,7 @@ class ClusterHlaCoclusters(ISparkDatasetJob):  ## YES!
 
         hhh = pdf_sample_hlas.loc[samples_to_cluster]
         X_hla, hla_index_map = get_imputed_HLA_indicator_vector(
-            hhh.x_inferred_hla_class_i.tolist(), hhh.x_inferred_hla_class_ii.tolist(), HLA_list=HLA_ALLELES,
+            hhh.x_inferred_hla_class_i.tolist(), hhh.x_inferred_hla_class_ii.tolist(), HLA_list=V8_HLA_ALLELES_WITH_HLACOCLUSTERS,
         )
         hla_index = hla_index_map[self.allele]
 

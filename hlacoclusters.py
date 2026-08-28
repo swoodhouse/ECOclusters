@@ -248,7 +248,6 @@ class ClusterHlaCoclusters(ISparkDatasetJob):  ## YES!
     hdbscan_min_samples = 10
     hdbscan_min_cluster_size = 10
     min_tcrs_per_cluster = 5
-    bimodal_vgenes = ['TCRBV04-03', 'TCRBV06-02/06-03', 'TCRBV07-02', 'TCRBV28-01', 'TCRBV30-01']  # probably move to a global function in hladb file
     fdr_cutoff = 1e-3
 
     schema = StructType([
@@ -257,9 +256,8 @@ class ClusterHlaCoclusters(ISparkDatasetJob):  ## YES!
         StructField('members', ArrayType(StringType()), True),
     ])
 
-    def __init__(self, allele: str, filter_bimodal_vgenes_tcrs: bool) -> None:
+    def __init__(self, allele: str) -> None:
         self.allele = allele
-        self.filter_bimodal_vgenes_tcrs = filter_bimodal_vgenes_tcrs
 
         super().__init__()
 
@@ -291,9 +289,6 @@ class ClusterHlaCoclusters(ISparkDatasetJob):  ## YES!
         )
 
     def output(self) -> str:
-        if self.filter_bimodal_vgenes_tcrs:
-            return f"taccs.hladb-v8-{clean_allele(self.allele)}-filter-bimodal-vgenes-fdr-{self.fdr_cutoff}.parquet"
-
         return f"taccs.hladb-v8-{clean_allele(self.allele)}-fdr-{self.fdr_cutoff}.parquet"
 
     def get_counts(
@@ -316,17 +311,6 @@ class ClusterHlaCoclusters(ISparkDatasetJob):  ## YES!
 
         )
         X_count_matrix = X_count_matrix.tocsr()  # type:ignore
-
-        if self.filter_bimodal_vgenes_tcrs:
-            logger.info(f"Filtering on {self.bimodal_vgenes}")
-
-            bioid_idx, bioids = zip(*[
-                (i, b) for i, b in enumerate(bioids) if not any(v in b for v in self.bimodal_vgenes)
-            ])
-            bioid_idx = list(bioid_idx)  # type:ignore
-            bioids = list(bioids)  # type:ignore
-
-            X_count_matrix = X_count_matrix[:, bioid_idx + [X_count_matrix.shape[1] - 1] ].tocsr()  # keep last column (UPR count)
 
         samples_to_cluster = list(
             set(hla_counted_sample_names).intersection(set(pdf_sample_hlas.name))

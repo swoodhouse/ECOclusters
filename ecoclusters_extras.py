@@ -143,11 +143,10 @@ def build_hlacocluster_mask(metas: pd.DataFrame, hlacocluster_names: List[str]) 
     mask_hlacoclusters = []
 
     for t in hlacocluster_names:
-        # hla = t[t.index('_')+1:]
         hla = t.split("-")[1]
         mask_hlacoclusters.append(mask_hlas[hla])
 
-    return csr_matrix(np.stack(mask_hlacoclusters, axis=0)).T  # stack axis = 1 instead?
+    return csr_matrix(np.stack(mask_hlacoclusters, axis=0)).T  
 
 
 class EcoclusterConstructor:
@@ -235,7 +234,7 @@ class EcoclusterConstructor:
                 cluster_hlacocluster_members.append(row["cluster_members"])
                 cluster_distances.append(row["distance"])
             else:
-                # overlap with existing clusters. It had better be the whole thing.
+                # check overlap with existing clusters. It should be the whole thing.
                 if not len(clusterhlacoclusters_inters_already) == len(cluster_hlacoclusters_set):
                     # we should never see a cluster with some members already accounted for and others not
                     raise ValueError(
@@ -247,10 +246,6 @@ class EcoclusterConstructor:
             + f"of {len(all_members)} HLA-COclusters"
         )
 
-        # I originally added an array of all component-cluster HLAs as an "hla" column here.
-        # But that drove spark insane, made the dataset impossible to work with, I don't
-        # know why.
-
         pdf_ecoclustering = pd.DataFrame(
             {
                 "cluster": [f"cluster_{i}" for i in range(len(cluster_hlacocluster_members))],
@@ -260,11 +255,8 @@ class EcoclusterConstructor:
             }
         )
         pdf_ecoclustering["n_members"] = [len(x) for x in pdf_ecoclustering.members]
-        pdf_ecoclustering["member_frequencies"] = [
-            [0] * n for n in pdf_ecoclustering.n_members
-        ]  # dummy values
 
-        # reorder cluster tight to loose, just for fun
+        # reorder clusters from tight to loose
         if len(pdf_ecoclustering) > 0:
             pdf_ecoclustering = pdf_ecoclustering.sort_values("cluster_distance", ascending=False)
         pdf_ecocluster_tcrs = self.reformat_ecoclusters_one_row_per_tcr(
@@ -335,7 +327,6 @@ def report_clusters_entiretree(
     pdf_hlacocluster_node_connectivity_all = pdf_hlacocluster_node_connectivity
 
     # count members in each cluster
-    # cluster_nbioids_map = dict(zip(*[pdf_hlacocluster_tcrs.cluster, pdf_hlacocluster_tcrs.n_bioids]))
     col_to_count = "hlacocluster" if "hlacocluster" in pdf_hlacocluster_tcrs.columns else "cluster"
     cluster_membercounts = pdf_hlacocluster_tcrs[col_to_count].value_counts()
     cluster_membercount_map = dict(zip(*[cluster_membercounts.index, cluster_membercounts]))
@@ -350,7 +341,7 @@ def report_clusters_entiretree(
 
     for _, row in pdf_hlacocluster_node_connectivity.iterrows():
         # lists holding all the _1 and _2 children, respectively,
-        # because I write those out
+        # because those get written out
         distance = row["distance"]
         if cluster_distance_threshold is not None and distance > cluster_distance_threshold:
             break

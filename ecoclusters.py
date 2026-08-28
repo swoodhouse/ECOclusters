@@ -42,10 +42,6 @@ import pandas as pd
 import itertools
 
 
-DEFAULT_MIN_MEMBERS: int = 1
-# this is just a meaninglessly high number. It's a count of HLA-COclusters, not TCRs.
-DEFAULT_MAX_MEMBERS: int = 20000
-
 logger = logging.getLogger(__name__)
 
 class HlaCoclusterNames(ISparkDatasetJob):
@@ -775,18 +771,11 @@ def report_clusters_entiretree(pdf_hlacocluster_node_connectivity: pd.DataFrame,
 
 class EcoclusterConstructor:
     def __init__(self,
-                 min_members: int = DEFAULT_MIN_MEMBERS,
-                 max_members: int = DEFAULT_MAX_MEMBERS,
                  max_distance: Optional[float] = None) -> None:
         """
         Args:
-            min_members (int, optional): Minimum HLA-COclusters to combine. Defaults to DEFAULT_MIN_MEMBERS.
-            max_members (int, optional): Maximum HLA-COclusters to combine. Defaults to DEFAULT_MAX_MEMBERS.
             max_distance (float, optional): Maximum distance in the tree to combine. Defaults to None.
-            max_mean_hlacoclusters_per_hla (float, optional): Maximum mean HLA-COclusters per HLA. Defaults to DEFAULT_MAX_MEAN_HLACOCLUSTERS_PER_HLA.
         """
-        self.min_members = min_members
-        self.max_members = max_members
         self.max_distance = max_distance
 
     def cluster_ecoclusters(self, pdf_node_connectivity: pd.DataFrame,
@@ -797,9 +786,7 @@ class EcoclusterConstructor:
 
         1. Walk up the tree accumulating clusters
         2. Walk down the tree in descending-sorted distance order. Return the first cluster
-        encountered, for each TCR, that satisfies min_members (minimum number of HLA-COclusters
-        subsumed), max_members (ditto but maximum) max_distance (maximum distance) and
-        max_mean_hlacoclusters_per_hla (maximum mean # HLA-COclusters per HLA).
+        encountered, for each TCR,.
         3. Annotate each cluster with its set of HLAs
 
         This class is capable of splitting ECOclusters at the first level in the tree at which
@@ -846,12 +833,6 @@ class EcoclusterConstructor:
         pdf_cluster_tree_distance_desc["mean_hlas_per_hlacocluster"] = (
             pdf_cluster_tree_distance_desc.n_hlacoclusters / pdf_cluster_tree_distance_desc.n_hlas)
 
-        # filter the tree on distance and mean HLAs per HLA-COcluster
-        pdf_cluster_tree_distance_desc = pdf_cluster_tree_distance_desc[
-            #(pdf_cluster_tree_distance_desc.mean_hlas_per_hlacocluster <= self.max_mean_hlacoclusters_per_hla) &
-            (pdf_cluster_tree_distance_desc.n_hlacoclusters <= self.max_members) &
-            (pdf_cluster_tree_distance_desc.n_hlacoclusters >= self.min_members)]
-        
         cluster_hlacocluster_members = []
         cluster_distances = []
         for _, row in pdf_cluster_tree_distance_desc.iterrows():

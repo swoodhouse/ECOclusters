@@ -28,7 +28,7 @@ from immunopipeline.ecocluster._ecocluster import (
     EcoclusterConstructor,  ##MUSTHAVE
     sparse_map_nonzero, ##MUSTHAVE
     masked_correlation, ##MUSTHAVE
-    build_tacc_mask # can't import from contrib  ##MUSTHAVE
+    build_hlacocluster_mask # can't import from contrib  ##MUSTHAVE
 )
 
 from scipy.stats import percentileofscore
@@ -45,26 +45,26 @@ import itertools
 
 
 DEFAULT_MIN_MEMBERS: int = 1
-# this is just a meaninglessly high number. It's a count of TACCs, not TCRs.
+# this is just a meaninglessly high number. It's a count of HLA-COclusters, not TCRs.
 DEFAULT_MAX_MEMBERS: int = 20000
 
 logger = logging.getLogger(__name__)
 
-V5_HLA_ALLELES_WITH_TACCS = [
+V5_HLA_ALLELES_WITH_HLACOCLUSTERS = [
     x for x in V5_HLA_ALLELES if
     x not in ["B*35:02", "B*39:10", "B*44:05", "B*58:02", "DPA1*01:03+DPB1*01:01", "DPA1*02:01+DPB1*03:01", "DPA1*02:01+DPB1*11:01", "DQA1*01:03+DQB1*06:09", "DRB1*16:01", "DRB1*16:02"]
 ]
 
-class TACCNames(ISparkDatasetJob):
+class HlaCoclusterNames(ISparkDatasetJob):
     description = """
-    Gives the ordered list of TACCs, for indexing the correlation matrix.
+    Gives the ordered list of HLA-COclusters, for indexing the correlation matrix.
     """
     author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     schema = StructType(
         [
             StructField(name="order_index", dataType=LongType(), nullable=False),
-            StructField(name="tacc", dataType=StringType(), nullable=False),
+            StructField(name="hlacocluster", dataType=StringType(), nullable=False),
         ]
     )
 
@@ -72,9 +72,9 @@ class TACCNames(ISparkDatasetJob):
         self.version = version
 
         if version == "V8":
-            self.ALLELES = V8_HLA_ALLELES_WITH_TACCS
+            self.ALLELES = V8_HLA_ALLELES_WITH_HLACOCLUSTERS
         elif version == "V5":
-            self.ALLELES = V5_HLA_ALLELES_WITH_TACCS
+            self.ALLELES = V5_HLA_ALLELES_WITH_HLACOCLUSTERS
 
         super().__init__()
 
@@ -84,12 +84,12 @@ class TACCNames(ISparkDatasetJob):
                 tuple(
                     [
                         InputRequirement(
-                            name=f"{clean_allele(allele)}_taccs",
+                            name=f"{clean_allele(allele)}_hlacoclusters",
                             dataset=f"taccs.hladb-v8-{clean_allele(allele)}-fdr-{1e-3}.parquet",
                             path="/parquet/*/",
                             strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                         )
-                        for allele in V8_HLA_ALLELES_WITH_TACCS
+                        for allele in V8_HLA_ALLELES_WITH_HLACOCLUSTERS
                     ]
                 )
             )
@@ -98,12 +98,12 @@ class TACCNames(ISparkDatasetJob):
                 tuple(
                     [
                         InputRequirement(
-                            name=f"{clean_allele(allele)}_taccs",
+                            name=f"{clean_allele(allele)}_hlacoclusters",
                             dataset=f"taccs.hladb-v5-{clean_allele(allele)}.parquet",
                             path="/parquet/*/",
                             strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                         )
-                        for allele in V5_HLA_ALLELES_WITH_TACCS
+                        for allele in V5_HLA_ALLELES_WITH_HLACOCLUSTERS
                     ]
                 )
             )
@@ -119,31 +119,31 @@ class TACCNames(ISparkDatasetJob):
             raise ValueError("Version not implemented")
 
     def transform(self, request: SparkDatasetJobRequest) -> DataFrame:
-        spark = df2spark(request.get(f"{clean_allele(self.ALLELES[0])}_taccs"))
+        spark = df2spark(request.get(f"{clean_allele(self.ALLELES[0])}_hlacoclusters"))
 
-        taccs = []
+        hlacoclusters = []
         for allele in self.ALLELES:
-            hla_taccs = (
-                request.get(f"{clean_allele(allele)}_taccs")
-                .select('tacc')
+            hla_hlacoclusters = (
+                request.get(f"{clean_allele(allele)}_hlacoclusters")
+                .select('hlacocluster')
                 .drop_duplicates()
-                .toPandas()['tacc'].tolist()
+                .toPandas()['hlacocluster'].tolist()
             )
-            taccs = taccs + hla_taccs
+            hlacoclusters = hlacoclusters + hla_hlacoclusters
 
-        taccs.sort()
+        hlacoclusters.sort()
 
         return spark.createDataFrame(
             schema=self.schema,
             data=pd.DataFrame.from_dict(  # type: ignore
-                {"order_index": [i for i in range(len(taccs))], "tacc": taccs}
+                {"order_index": [i for i in range(len(hlacoclusters))], "hlacocluster": hlacoclusters}
             )
         )
 
 
-class CountTACCs(ISparkDatasetJob):
+class CountHlaCoclusters(ISparkDatasetJob):
     description = """
-    Sparse samples x TACC count matrix.
+    Sparse samples x HLA-COcluster count matrix.
     """
     author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
@@ -159,9 +159,9 @@ class CountTACCs(ISparkDatasetJob):
         self.version = version
 
         if version == "V8":
-            self.ALLELES = V8_HLA_ALLELES_WITH_TACCS
+            self.ALLELES = V8_HLA_ALLELES_WITH_HLACOCLUSTERS
         elif version == "V5":
-            self.ALLELES = V5_HLA_ALLELES_WITH_TACCS
+            self.ALLELES = V5_HLA_ALLELES_WITH_HLACOCLUSTERS
         super().__init__()
 
     def inputs(self) -> DatasetInputRequirements:
@@ -178,12 +178,12 @@ class CountTACCs(ISparkDatasetJob):
                     ] +
                     [
                         InputRequirement(
-                            name=f"{clean_allele(allele)}_taccs",
+                            name=f"{clean_allele(allele)}_hlacoclusters",
                             dataset=f"taccs.hladb-v8-{clean_allele(allele)}-fdr-{1e-3}.parquet",
                             path="/parquet/*/",
                             strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                         )
-                        for allele in V8_HLA_ALLELES_WITH_TACCS
+                        for allele in V8_HLA_ALLELES_WITH_HLACOCLUSTERS
                     ] +
                     [
                         InputRequirement(
@@ -192,7 +192,7 @@ class CountTACCs(ISparkDatasetJob):
                             path="/parquet/*/",
                             strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                         )
-                        for allele in V8_HLA_ALLELES_WITH_TACCS
+                        for allele in V8_HLA_ALLELES_WITH_HLACOCLUSTERS
                     ]
                 )
             )
@@ -209,12 +209,12 @@ class CountTACCs(ISparkDatasetJob):
                     ] +
                     [
                         InputRequirement(
-                            name=f"{clean_allele(allele)}_taccs",
+                            name=f"{clean_allele(allele)}_hlacoclusters",
                             dataset=f"taccs.hladb-v5-{clean_allele(allele)}.parquet",
                             path="/parquet/*/",
                             strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                         )
-                        for allele in V5_HLA_ALLELES_WITH_TACCS
+                        for allele in V5_HLA_ALLELES_WITH_HLACOCLUSTERS
                     ] +
                     [
                         InputRequirement(
@@ -223,7 +223,7 @@ class CountTACCs(ISparkDatasetJob):
                             path="/parquet/*/",
                             strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                         )
-                        for allele in V5_HLA_ALLELES_WITH_TACCS
+                        for allele in V5_HLA_ALLELES_WITH_HLACOCLUSTERS
                     ]
                 )
             )
@@ -246,59 +246,59 @@ class CountTACCs(ISparkDatasetJob):
             .tolist()
         )
 
-    def get_tacc_tcrs(self, request: SparkDatasetJobRequest, allele: str) -> DataFrame:
-        taccs_tcrs = (
-            request.get(f"{clean_allele(allele)}_taccs")
+    def get_hlacocluster_tcrs(self, request: SparkDatasetJobRequest, allele: str) -> DataFrame:
+        hlacoclusters_tcrs = (
+            request.get(f"{clean_allele(allele)}_hlacoclusters")
             .withColumn("bioIdentity", F.explode(F.col('members')))
             .drop('members', 'hla')
         )
 
-        return taccs_tcrs
+        return hlacoclusters_tcrs
 
-    def count_tacc_tcrs(self, seqs: DataFrame, tacc_tcrs: DataFrame, sample_names: List[str]) -> coo_matrix:
-        tacc_tcrs = tacc_tcrs.cache()
+    def count_hlacocluster_tcrs(self, seqs: DataFrame, hlacocluster_tcrs: DataFrame, sample_names: List[str]) -> coo_matrix:
+        hlacocluster_tcrs = hlacocluster_tcrs.cache()
 
         seqs = (
-            seqs.join(tacc_tcrs, on='bioIdentity')
-            .select('name', 'tacc', 'bioIdentity')
+            seqs.join(hlacocluster_tcrs, on='bioIdentity')
+            .select('name', 'hlacocluster', 'bioIdentity')
             .where(F.col('name').isin(sample_names))
-            .groupBy('name', 'tacc')
+            .groupBy('name', 'hlacocluster')
             .agg(F.expr("count(bioIdentity) as cr_count"))
         )
 
-        tacc_counts = (
+        hlacocluster_counts = (
             seqs.groupby('name')
-            .pivot("tacc")
+            .pivot("hlacocluster")
             .sum("cr_count")
             .toPandas()
             .fillna(0)
         )
 
-        missing_samples = set(sample_names).difference(tacc_counts['name'].tolist())
+        missing_samples = set(sample_names).difference(hlacocluster_counts['name'].tolist())
         zeroes = pd.DataFrame(0,
                               index=list(missing_samples),
-                              columns=[x for x in tacc_counts.columns.tolist() if x is not "name"])
+                              columns=[x for x in hlacocluster_counts.columns.tolist() if x is not "name"])
 
         zeroes['name'] = zeroes.index
         zeroes = zeroes.reset_index(drop=True)
-        tacc_counts = pd.concat([tacc_counts, zeroes])
+        hlacocluster_counts = pd.concat([hlacocluster_counts, zeroes])
 
-        tacc_counts = tacc_counts.sort_values(by='name')
-        tacc_counts.sort_index(axis=1, inplace=True)
+        hlacocluster_counts = hlacocluster_counts.sort_values(by='name')
+        hlacocluster_counts.sort_index(axis=1, inplace=True)
 
-        assert tacc_counts.columns.tolist()[:-1] == sorted(tacc_tcrs.select('tacc').drop_duplicates().toPandas()['tacc'].tolist())
-        assert tacc_counts["name"].tolist() == sorted(sample_names)
+        assert hlacocluster_counts.columns.tolist()[:-1] == sorted(hlacocluster_tcrs.select('hlacocluster').drop_duplicates().toPandas()['hlacocluster'].tolist())
+        assert hlacocluster_counts["name"].tolist() == sorted(sample_names)
 
         count_matrix = coo_matrix(
-            tacc_counts.drop('name', axis=1).to_numpy(),
+            hlacocluster_counts.drop('name', axis=1).to_numpy(),
             dtype=np.dtype(int),
-            shape=(len(sample_names), len(tacc_counts.columns.tolist()[:-1]))
+            shape=(len(sample_names), len(hlacocluster_counts.columns.tolist()[:-1]))
         )
 
         return count_matrix
 
     def transform(self, request: SparkDatasetJobRequest) -> DataFrame:
-        spark = df2spark(request.get(f"{clean_allele(self.ALLELES[0])}_taccs"))
+        spark = df2spark(request.get(f"{clean_allele(self.ALLELES[0])}_hlacoclusters"))
         sample_names = self.get_sample_names(request)
         columns = []
 
@@ -307,8 +307,8 @@ class CountTACCs(ISparkDatasetJob):
                 request.get(f"{clean_allele(allele)}_filteredseqs")
                 .select('bioIdentity', 'sample.name')
             )
-            tacc_tcrs = self.get_tacc_tcrs(request, allele)
-            columns.append(self.count_tacc_tcrs(seqs, tacc_tcrs, sample_names))
+            hlacocluster_tcrs = self.get_hlacocluster_tcrs(request, allele)
+            columns.append(self.count_hlacocluster_tcrs(seqs, hlacocluster_tcrs, sample_names))
 
         count_matrix = hstack(columns, format="coo", dtype=np.dtype(int))
         coords = [x.tolist() for x in list(count_matrix.coords)]
@@ -339,7 +339,7 @@ def clustering_rcd_inputs(version: str):
                         strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                     ),
                     InputRequirement(
-                        name="tacc_mask",
+                        name="hlacocluster_mask",
                         dataset=f"ecoclusters.hladb-v8.tacc-mask.parquet",                        
                         path="/parquet/*/",
                         strategy=DatasetResolverStrategy.MATCH_OUTPUT,
@@ -363,7 +363,7 @@ def clustering_rcd_inputs(version: str):
                         strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                     ),
                     InputRequirement(
-                        name="tacc_names",
+                        name="hlacocluster_names",
                         dataset=f"ecoclusters.tacc_names.hladb-v8-fdr-{1e-3}.parquet",
                         path="/parquet/*/",
                         strategy=DatasetResolverStrategy.MATCH_OUTPUT,
@@ -388,7 +388,7 @@ def clustering_rcd_inputs(version: str):
                         strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                     ),
                     InputRequirement(
-                        name="tacc_names",
+                        name="hlacocluster_names",
                         dataset="ecoclusters.tacc_names.hladb-v5.parquet",
                         path="/parquet/*/",
                         strategy=DatasetResolverStrategy.MATCH_OUTPUT,
@@ -408,17 +408,17 @@ def get_metas(request: SparkDatasetJobRequest) -> pd.DataFrame:
     )
 
 
-def get_tacc_names(request: SparkDatasetJobRequest) -> List[str]:
+def get_hlacocluster_names(request: SparkDatasetJobRequest) -> List[str]:
     return (
-        request.get("tacc_names")
+        request.get("hlacocluster_names")
         .toPandas()
-        .sort_values(by="order_index")["tacc"]
+        .sort_values(by="order_index")["hlacocluster"]
         .tolist()
     )
 
 
 # refactor out this duplication
-def get_count_matrix(request: SparkDatasetJobRequest, n_samples: int, n_taccs: int) -> csr_matrix:
+def get_count_matrix(request: SparkDatasetJobRequest, n_samples: int, n_hlacoclusters: int) -> csr_matrix:
     pdf = (
         request.get('count_matrix')
         .toPandas()
@@ -427,28 +427,28 @@ def get_count_matrix(request: SparkDatasetJobRequest, n_samples: int, n_taccs: i
     matrix = (
         coo_matrix((pdf['data'].tolist(), (pdf["coords0"].tolist(), pdf["coords1"].tolist())),
                    dtype=np.float32,
-                   shape=(n_samples, n_taccs))
+                   shape=(n_samples, n_hlacoclusters))
         .tocsr()
     )
 
     return matrix
 
-def get_tacc_mask(request: SparkDatasetJobRequest, n_samples: int, n_taccs: int) -> csr_matrix:
+def get_hlacocluster_mask(request: SparkDatasetJobRequest, n_samples: int, n_hlacoclusters: int) -> csr_matrix:
     pdf = (
-        request.get('tacc_mask')
+        request.get('hlacocluster_mask')
         .toPandas()
     )
 
     matrix = (
         coo_matrix((pdf['data'].tolist(), (pdf["coords0"].tolist(), pdf["coords1"].tolist())),
                    dtype=np.float32,
-                   shape=(n_samples, n_taccs))
+                   shape=(n_samples, n_hlacoclusters))
         .tocsr()
     )
 
     return matrix
 
-def get_correlation_matrix(request: SparkDatasetJobRequest, n_taccs: int, n_min_samples: int) -> csr_matrix:
+def get_correlation_matrix(request: SparkDatasetJobRequest, n_hlacoclusters: int, n_min_samples: int) -> csr_matrix:
     pdf = (
         request.get(f'correlation_matrix_min_samples_{n_min_samples}')
         .toPandas()
@@ -457,14 +457,14 @@ def get_correlation_matrix(request: SparkDatasetJobRequest, n_taccs: int, n_min_
     matrix = (
         coo_matrix((pdf['data'].tolist(), (pdf["coords0"].tolist(), pdf["coords1"].tolist())),
                    dtype=np.float32,
-                   shape=(n_taccs, n_taccs))
+                   shape=(n_hlacoclusters, n_hlacoclusters))
         .tocsr()
     )
 
     return matrix
 
 
-def get_correlation_matrix_with_nans(request: SparkDatasetJobRequest, n_taccs: int, n_min_samples: int) -> csr_matrix:
+def get_correlation_matrix_with_nans(request: SparkDatasetJobRequest, n_hlacoclusters: int, n_min_samples: int) -> csr_matrix:
     pdf = (
         request.get(f'correlation_matrix_with_nans_min_samples_{n_min_samples}')
         .toPandas()
@@ -473,16 +473,16 @@ def get_correlation_matrix_with_nans(request: SparkDatasetJobRequest, n_taccs: i
     matrix = (
         coo_matrix((pdf['data'].tolist(), (pdf["coords0"].tolist(), pdf["coords1"].tolist())),
                    dtype=np.float32,
-                   shape=(n_taccs, n_taccs))
+                   shape=(n_hlacoclusters, n_hlacoclusters))
         .tocsr()
     )
 
     return matrix
 
-class TACCMask(ISparkDatasetJob):
+class HlaCoclusterMask(ISparkDatasetJob):
     description ="""
-    Builds sample x TACC sparse binary matrix where 1 means
-    this sample has the HLA corresponding to this TACC, 0
+    Builds sample x HLA-COcluster sparse binary matrix where 1 means
+    this sample has the HLA corresponding to this HLA-COcluster, 0
     means it does not.
     """
     author = DatasetEmail("swoodhouse@adaptivebiotech.com")
@@ -508,10 +508,10 @@ class TACCMask(ISparkDatasetJob):
 
     def transform(self, request: SparkDatasetJobRequest) -> DataFrame:
         metas = get_metas(request)
-        tacc_names = get_tacc_names(request)
+        hlacocluster_names = get_hlacocluster_names(request)
         spark = df2spark(request.get('hlas'))
 
-        mask = build_tacc_mask(metas, tacc_names).tocoo()
+        mask = build_hlacocluster_mask(metas, hlacocluster_names).tocoo()
 
         coords = [x.tolist() for x in list(mask.coords)]
 
@@ -525,7 +525,7 @@ class TACCMask(ISparkDatasetJob):
 
 class CorrelationMatrix(ISparkDatasetJob):
     description ="""
-    Builds TACC x TACC sparse HLA-masked correlation matrix.
+    Builds HLA-COcluster x HLA-COcluster sparse HLA-masked correlation matrix.
     """
     author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
@@ -551,9 +551,9 @@ class CorrelationMatrix(ISparkDatasetJob):
 
     def transform(self, request: SparkDatasetJobRequest) -> DataFrame:
         metas = get_metas(request)
-        tacc_names = get_tacc_names(request)
-        mask = get_tacc_mask(request, len(metas), len(tacc_names))
-        count_matrix = get_count_matrix(request, len(metas), len(tacc_names))
+        hlacocluster_names = get_hlacocluster_names(request)
+        mask = get_hlacocluster_mask(request, len(metas), len(hlacocluster_names))
+        count_matrix = get_count_matrix(request, len(metas), len(hlacocluster_names))
         spark = df2spark(request.get('hlas'))
 
         # if it is the full correlation matrix we compute it here
@@ -562,7 +562,7 @@ class CorrelationMatrix(ISparkDatasetJob):
 
         # else, we assume the full one has been computed and manipulate that
         else:
-            corr = get_correlation_matrix(request, len(tacc_names), 0)
+            corr = get_correlation_matrix(request, len(hlacocluster_names), 0)
 
             min_shared_samples = sparse_map_nonzero(
                 mask.T @ mask, lambda x: (x >= self.min_shared_samples).astype(np.float32)
@@ -581,8 +581,8 @@ class CorrelationMatrix(ISparkDatasetJob):
 
 class CorrelationMatrixWithNaNs(ISparkDatasetJob):
     description ="""
-    Builds TACC x TACC sparse HLA-masked correlation matrix, with NaNs
-    where a pair of TACCs do not share enough HLA-matched donors, instead of 0.
+    Builds HLA-COcluster x HLA-COcluster sparse HLA-masked correlation matrix, with NaNs
+    where a pair of HLA-COclusters do not share enough HLA-matched donors, instead of 0.
     """
     author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
@@ -608,14 +608,14 @@ class CorrelationMatrixWithNaNs(ISparkDatasetJob):
 
     def transform(self, request: SparkDatasetJobRequest) -> DataFrame:
         metas = get_metas(request)
-        tacc_names = get_tacc_names(request)
-        mask = get_tacc_mask(request, len(metas), len(tacc_names))
-        count_matrix = get_count_matrix(request, len(metas), len(tacc_names))
+        hlacocluster_names = get_hlacocluster_names(request)
+        mask = get_hlacocluster_mask(request, len(metas), len(hlacocluster_names))
+        count_matrix = get_count_matrix(request, len(metas), len(hlacocluster_names))
         spark = df2spark(request.get('hlas'))
 
         logger.info("Loading correlation matrix")
 
-        corr = get_correlation_matrix(request, len(tacc_names), 0)
+        corr = get_correlation_matrix(request, len(hlacocluster_names), 0)
 
         logger.info("Masking to NaNs, 1")
 
@@ -650,7 +650,7 @@ class CorrelationMatrixWithNaNs(ISparkDatasetJob):
 
 class ECOclusteringTree(ISparkDatasetJob):
     description = """
-    Build ECOClusters from V8 or V5 HLAdb TACCs. Clustering is done on driver node.
+    Build ECOClusters from V8 or V5 HLAdb HLA-COclusters. Clustering is done on driver node.
     No executors are required, but a large amount of driver RAM is.
     """
     author = DatasetEmail("swoodhouse@adaptivebiotech.com")
@@ -687,10 +687,10 @@ class ECOclusteringTree(ISparkDatasetJob):
             raise ValueError("Version not implemented")
 
     def transform(self, request: SparkDatasetJobRequest) -> DataFrame:
-        tacc_names = get_tacc_names(request)
+        hlacocluster_names = get_hlacocluster_names(request)
         spark = df2spark(request.get('hlas'))
 
-        corr = get_correlation_matrix(request, len(tacc_names), self.min_shared_samples_correlation)
+        corr = get_correlation_matrix(request, len(hlacocluster_names), self.min_shared_samples_correlation)
 
         # replace any nans with 0
         nan_to_zero = sparse_map_nonzero(
@@ -720,7 +720,7 @@ class ECOclusteringTree(ISparkDatasetJob):
 
 class ECOclusteringExactTree(ISparkDatasetJob):
     description = """
-    Build ECOClustering agglomerative clustering tree from V8 or V5 HLAdb TACCs. Clustering is done on driver node.
+    Build ECOClustering agglomerative clustering tree from V8 or V5 HLAdb HLA-COclusters. Clustering is done on driver node.
     No executors are required, but a large amount of driver RAM is.
     This RCD computes the exact average correlation distances at each level of the tree rather
     than using average linkage.
@@ -757,10 +757,10 @@ class ECOclusteringExactTree(ISparkDatasetJob):
             raise ValueError("Version not implemented")
 
     def transform(self, request: SparkDatasetJobRequest) -> DataFrame:
-        tacc_names = get_tacc_names(request)
+        hlacocluster_names = get_hlacocluster_names(request)
         spark = df2spark(request.get('hlas'))
 
-        corr = get_correlation_matrix_with_nans(request, len(tacc_names), self.min_shared_samples_correlation)
+        corr = get_correlation_matrix_with_nans(request, len(hlacocluster_names), self.min_shared_samples_correlation)
 
         corr = (corr + corr.T + identity(corr.shape[0])).toarray()
 
@@ -783,17 +783,17 @@ class ECOclusteringExactTree(ISparkDatasetJob):
 
 # move this. can't import from contib
 
-def report_clusters_entiretree(pdf_tacc_node_connectivity: pd.DataFrame,
-                               tacc_names_in_order: List[str],
-                               pdf_tacc_tcrs: pd.DataFrame) -> pd.DataFrame:
+def report_clusters_entiretree(pdf_hlacocluster_node_connectivity: pd.DataFrame,
+                               hlacocluster_names_in_order: List[str],
+                               pdf_hlacocluster_tcrs: pd.DataFrame) -> pd.DataFrame:
     """
     Walk up the agglomerativeclustering tree and report the clusters at every
     node.
 
     Args:
-        pdf_tacc_node_connectivity (pd.DataFrame): dataframe describing the clustering tree
-        pdf_tacc_tcrs: 
-        tacc_names_in_order (List(str)): list of tacc names in order
+        pdf_hlacocluster_node_connectivity (pd.DataFrame): dataframe describing the clustering tree
+        pdf_hlacocluster_tcrs: 
+        hlacocluster_names_in_order (List(str)): list of HLA-COcluster names in order
 
     Returns:
         pd.DataFrame: clusters all through the tree
@@ -802,57 +802,57 @@ def report_clusters_entiretree(pdf_tacc_node_connectivity: pd.DataFrame,
     cluster_distance_threshold = None
             
     # combine all the child nodes together and figure out which ones are bioids and samples
-    n_leaf_nodes = len(tacc_names_in_order)
+    n_leaf_nodes = len(hlacocluster_names_in_order)
     
     # retain the full connectivity dataframe in _all
-    pdf_tacc_node_connectivity_all = pdf_tacc_node_connectivity
+    pdf_hlacocluster_node_connectivity_all = pdf_hlacocluster_node_connectivity
 
     # count members in each cluster
-    #cluster_nbioids_map = dict(zip(*[pdf_tacc_tcrs.cluster, pdf_tacc_tcrs.n_bioids]))
-    cluster_membercounts = pdf_tacc_tcrs.cluster.value_counts()
+    #cluster_nbioids_map = dict(zip(*[pdf_hlacocluster_tcrs.cluster, pdf_hlacocluster_tcrs.n_bioids]))
+    cluster_membercounts = pdf_hlacocluster_tcrs.cluster.value_counts()
     cluster_membercount_map = dict(zip(*[cluster_membercounts.index, cluster_membercounts]))
 
     # initialize the lists that will become result columns.
     # seed with n_leaf_node dummy rows so that indexes match up
-    clusters_at_idxs = [[tacc_name] for tacc_name in tacc_names_in_order]
-    bioid_counts = [cluster_membercount_map[cluster] for cluster in tacc_names_in_order]
+    clusters_at_idxs = [[hlacocluster_name] for hlacocluster_name in hlacocluster_names_in_order]
+    bioid_counts = [cluster_membercount_map[cluster] for cluster in hlacocluster_names_in_order]
     distances = [0] * n_leaf_nodes
     child_1_idxs = [-1] * n_leaf_nodes
     child_2_idxs = [-1] * n_leaf_nodes
     
-    for _, row in pdf_tacc_node_connectivity.iterrows():
+    for _, row in pdf_hlacocluster_node_connectivity.iterrows():
         # lists holding all the _1 and _2 children, respectively,
         # because I write those out
         distance = row["distance"]
         if cluster_distance_threshold is not None and distance > cluster_distance_threshold:
             break
-        cluster_tacc_lists_bothcols = []    
+        cluster_hlacocluster_lists_bothcols = []    
         n_bioids = 0 
         for col in ["child_1", "child_2"]:
             cluster_idx = int(row[col])
             if cluster_idx > len(clusters_at_idxs) - 1:
                 logger.warning(f"Fail! cluster_idx={cluster_idx}, clusters: {len(clusters_at_idxs)}")
             this_bioid_list = clusters_at_idxs[cluster_idx]
-            cluster_tacc_lists_bothcols.append(this_bioid_list)
+            cluster_hlacocluster_lists_bothcols.append(this_bioid_list)
             if col == "child_1":
                 child_1_idxs.append(cluster_idx)
             else:
                 child_2_idxs.append(cluster_idx)
             n_bioids += bioid_counts[cluster_idx]
             
-        cluster_child1_taccs, cluster_child2_taccs = cluster_tacc_lists_bothcols
+        cluster_child1_hlacoclusters, cluster_child2_hlacoclusters = cluster_hlacocluster_lists_bothcols
         
-        # hold all the taccs in this cluster
-        this_cluster_taccs = cluster_child1_taccs + cluster_child2_taccs
+        # hold all the HLA-COclusters in this cluster
+        this_cluster_hlacoclusters = cluster_child1_hlacoclusters + cluster_child2_hlacoclusters
         
         bioid_counts.append(n_bioids)
         distances.append(distance)
-        clusters_at_idxs.append(this_cluster_taccs)
+        clusters_at_idxs.append(this_cluster_hlacoclusters)
 
     # make the clusters dataframe with everything
     pdf_clusters_distances = pd.DataFrame({
         "cluster_members": clusters_at_idxs,
-        "n_taccs": [len(x) for x in clusters_at_idxs],
+        "n_hlacoclusters": [len(x) for x in clusters_at_idxs],
         "n_bioids": bioid_counts,
         "distance": distances,
         "tree_idx": range(len(clusters_at_idxs)),
@@ -867,7 +867,7 @@ def report_clusters_entiretree(pdf_tacc_node_connectivity: pd.DataFrame,
 
     # Calculate all distances as percentiles of the full distance distribution
     pdf_clusters_distances["distance_percentile"] = percentileofscore(
-        pdf_tacc_node_connectivity_all.distance, pdf_clusters_distances.distance)
+        pdf_hlacocluster_node_connectivity_all.distance, pdf_clusters_distances.distance)
 
     return pdf_clusters_distances
 
@@ -878,36 +878,36 @@ class EcoclusterConstructor:
                  max_distance: Optional[float] = None) -> None:
         """
         Args:
-            min_members (int, optional): Minimum TACCs to combine. Defaults to DEFAULT_MIN_MEMBERS.
-            max_members (int, optional): Maximum TACCs to combine. Defaults to DEFAULT_MAX_MEMBERS.
+            min_members (int, optional): Minimum HLA-COclusters to combine. Defaults to DEFAULT_MIN_MEMBERS.
+            max_members (int, optional): Maximum HLA-COclusters to combine. Defaults to DEFAULT_MAX_MEMBERS.
             max_distance (float, optional): Maximum distance in the tree to combine. Defaults to None.
-            max_mean_taccs_per_hla (float, optional): Maximum mean TACCs per HLA. Defaults to DEFAULT_MAX_MEAN_TACCS_PER_HLA.
+            max_mean_hlacoclusters_per_hla (float, optional): Maximum mean HLA-COclusters per HLA. Defaults to DEFAULT_MAX_MEAN_HLACOCLUSTERS_PER_HLA.
         """
         self.min_members = min_members
         self.max_members = max_members
         self.max_distance = max_distance
 
     def cluster_ecoclusters(self, pdf_node_connectivity: pd.DataFrame,
-                            tacc_names_in_order: List[str],
-                            pdf_tacc_tcrs: pd.DataFrame) -> pd.DataFrame:
+                            hlacocluster_names_in_order: List[str],
+                            pdf_hlacocluster_tcrs: pd.DataFrame) -> pd.DataFrame:
         """
         Construct ECOClusters, in a cross-HLA clustering-of-clusters setting. Steps:
 
         1. Walk up the tree accumulating clusters
         2. Walk down the tree in descending-sorted distance order. Return the first cluster
-        encountered, for each TCR, that satisfies min_members (minimum number of TACCs
+        encountered, for each TCR, that satisfies min_members (minimum number of HLA-COclusters
         subsumed), max_members (ditto but maximum) max_distance (maximum distance) and
-        max_mean_taccs_per_hla (maximum mean # TACCs per HLA).
+        max_mean_hlacoclusters_per_hla (maximum mean # HLA-COclusters per HLA).
         3. Annotate each cluster with its set of HLAs
 
         This class is capable of splitting ECOclusters at the first level in the tree at which
-        the mean number of HLAs per TACC exceeds a threshold, but by default this is set to an
+        the mean number of HLAs per HLA-COcluster exceeds a threshold, but by default this is set to an
         impossibly high number so that no splitting is done.
 
         Args:
             pdf_node_connectivity (PandasDataFrame): dataframe containing the AgglomerativeClustering result
-            tacc_names_in_order: list of the TACC names in index order as referred to in above arg
-            pdf_tacc_tcrs: TACC dataframe with one row per bioIdentity+TACC
+            hlacocluster_names_in_order: list of the HLA-COcluster names in index order as referred to in above arg
+            pdf_hlacocluster_tcrs: HLA-COcluster dataframe with one row per bioIdentity+HLA-COcluster
         Raises:
             ValueError: raised if the clustering fails because the tree wasn't arranged properly.
 
@@ -916,7 +916,7 @@ class EcoclusterConstructor:
                 clustering, but no "hla" column
         """
         pdf_cluster_tree = report_clusters_entiretree(
-            pdf_node_connectivity, tacc_names_in_order, pdf_tacc_tcrs)
+            pdf_node_connectivity, hlacocluster_names_in_order, pdf_hlacocluster_tcrs)
 
         all_members = set().union(*[set(x) for x in pdf_cluster_tree.cluster_members])
         pdf_cluster_tree["order"] = range(len(pdf_cluster_tree))
@@ -926,59 +926,59 @@ class EcoclusterConstructor:
             pdf_cluster_tree_distance_desc = pdf_cluster_tree_distance_desc[
                 pdf_cluster_tree_distance_desc.distance <= self.max_distance]
         
-        taccs_in_clusters: Set[str] = set()
+        hlacoclusters_in_clusters: Set[str] = set()
 
-        # make for easy lookup of TACC HLAs
-        pdf_tacc_hlas = pdf_tacc_tcrs.drop_duplicates("cluster")
-        tacc_hla_map = dict(zip(*[pdf_tacc_hlas.cluster,
-                                pdf_tacc_hlas.hla])) 
-        def lookup_tacclist_hlas(tacc_list: List[str]) -> Set[str]:
-            return set([tacc_hla_map[tacc] for tacc in tacc_list])
+        # make for easy lookup of HLA-COcluster HLAs
+        pdf_hlacocluster_hlas = pdf_hlacocluster_tcrs.drop_duplicates("cluster")
+        hlacocluster_hla_map = dict(zip(*[pdf_hlacocluster_hlas.cluster,
+                                pdf_hlacocluster_hlas.hla])) 
+        def lookup_hlacoclusterlist_hlas(hlacocluster_list: List[str]) -> Set[str]:
+            return set([hlacocluster_hla_map[hlacocluster] for hlacocluster in hlacocluster_list])
 
-        pdf_cluster_tree_distance_desc["n_taccs"] = pdf_cluster_tree_distance_desc.cluster_members.apply(len)
+        pdf_cluster_tree_distance_desc["n_hlacoclusters"] = pdf_cluster_tree_distance_desc.cluster_members.apply(len)
 
-        # Calculate mean HLAs per TACC at each node
+        # Calculate mean HLAs per HLA-COcluster at each node
         pdf_cluster_tree_distance_desc["hlas"] = pdf_cluster_tree_distance_desc.cluster_members.apply(
-            lookup_tacclist_hlas)
+            lookup_hlacoclusterlist_hlas)
         pdf_cluster_tree_distance_desc["n_hlas"] = pdf_cluster_tree_distance_desc.hlas.apply(len)
-        pdf_cluster_tree_distance_desc["mean_hlas_per_tacc"] = (
-            pdf_cluster_tree_distance_desc.n_taccs / pdf_cluster_tree_distance_desc.n_hlas)
+        pdf_cluster_tree_distance_desc["mean_hlas_per_hlacocluster"] = (
+            pdf_cluster_tree_distance_desc.n_hlacoclusters / pdf_cluster_tree_distance_desc.n_hlas)
 
-        # filter the tree on distance and mean HLAs per TACC
+        # filter the tree on distance and mean HLAs per HLA-COcluster
         pdf_cluster_tree_distance_desc = pdf_cluster_tree_distance_desc[
-            #(pdf_cluster_tree_distance_desc.mean_hlas_per_tacc <= self.max_mean_taccs_per_hla) &
-            (pdf_cluster_tree_distance_desc.n_taccs <= self.max_members) &
-            (pdf_cluster_tree_distance_desc.n_taccs >= self.min_members)]
+            #(pdf_cluster_tree_distance_desc.mean_hlas_per_hlacocluster <= self.max_mean_hlacoclusters_per_hla) &
+            (pdf_cluster_tree_distance_desc.n_hlacoclusters <= self.max_members) &
+            (pdf_cluster_tree_distance_desc.n_hlacoclusters >= self.min_members)]
         
-        cluster_tacc_members = []
+        cluster_hlacocluster_members = []
         cluster_distances = []
         for _, row in pdf_cluster_tree_distance_desc.iterrows():
-            cluster_taccs_set = set(row["cluster_members"])
-            clustertaccs_inters_already = cluster_taccs_set.intersection(taccs_in_clusters)
-            if len(clustertaccs_inters_already) == 0:
+            cluster_hlacoclusters_set = set(row["cluster_members"])
+            clusterhlacoclusters_inters_already = cluster_hlacoclusters_set.intersection(hlacoclusters_in_clusters)
+            if len(clusterhlacoclusters_inters_already) == 0:
                 # no overlap with existing clusters
                 # new cluster, add it
-                taccs_in_clusters.update(cluster_taccs_set)
-                cluster_tacc_members.append(row["cluster_members"])
+                hlacoclusters_in_clusters.update(cluster_hlacoclusters_set)
+                cluster_hlacocluster_members.append(row["cluster_members"])
                 cluster_distances.append(row["distance"])
             else:
                 # overlap with existing clusters. It had better be the whole thing.
-                if not len(clustertaccs_inters_already) == len(cluster_taccs_set):
+                if not len(clusterhlacoclusters_inters_already) == len(cluster_hlacoclusters_set):
                     # we should never see a cluster with some members already accounted for and others not
                     raise ValueError(
-                        f"ERROR! cluster taccs already clustered: {clustertaccs_inters_already}, " +
-                        "total in set: {cluster_taccs_set}")
-        logger.debug(f"    Clusters: {len(cluster_tacc_members)}. Retained {len(taccs_in_clusters)} " +
-                    f"of {len(all_members)} TACCs")
+                        f"ERROR! cluster HLA-COclusters already clustered: {clusterhlacoclusters_inters_already}, " +
+                        "total in set: {cluster_hlacoclusters_set}")
+        logger.debug(f"    Clusters: {len(cluster_hlacocluster_members)}. Retained {len(hlacoclusters_in_clusters)} " +
+                    f"of {len(all_members)} HLA-COclusters")
 
         # I originally added an array of all component-cluster HLAs as an "hla" column here.
         # But that drove spark insane, made the dataset impossible to work with, I don't
         # know why.
 
         pdf_ecoclustering = pd.DataFrame({
-            "cluster": [f"e-{i}" for i in range(len(cluster_tacc_members))],
-            "members": cluster_tacc_members,
-            "ASR_in_cluster": [0] * len(cluster_tacc_members), # dummy value
+            "cluster": [f"e-{i}" for i in range(len(cluster_hlacocluster_members))],
+            "members": cluster_hlacocluster_members,
+            "ASR_in_cluster": [0] * len(cluster_hlacocluster_members), # dummy value
             "cluster_distance": cluster_distances,
         })
         pdf_ecoclustering["n_members"] = [len(x) for x in pdf_ecoclustering.members]
@@ -988,19 +988,19 @@ class EcoclusterConstructor:
         if len(pdf_ecoclustering) > 0:
             pdf_ecoclustering = pdf_ecoclustering.sort_values("cluster_distance", ascending=False)
         pdf_ecocluster_tcrs = self.reformat_ecoclusters_one_row_per_tcr(
-            pdf_ecoclustering, pdf_tacc_tcrs
+            pdf_ecoclustering, pdf_hlacocluster_tcrs
         )
         return pdf_ecocluster_tcrs
 
     def reformat_ecoclusters_one_row_per_tcr(self,
             pdf_ecoclustering: pd.DataFrame,
-            pdf_tacc_tcrs: pd.DataFrame) -> pd.DataFrame:
-        pdf_tacc_ecocluster_map = pdf_ecoclustering.explode("members")[  # type: ignore
+            pdf_hlacocluster_tcrs: pd.DataFrame) -> pd.DataFrame:
+        pdf_hlacocluster_ecocluster_map = pdf_ecoclustering.explode("members")[  # type: ignore
             ["cluster", "members"]].rename(columns={
              "cluster": "ecocluster",
              "members": "cluster"
         })
-        pdf_ecocluster_tcrs = pdf_tacc_tcrs.merge(pdf_tacc_ecocluster_map, on="cluster")
+        pdf_ecocluster_tcrs = pdf_hlacocluster_tcrs.merge(pdf_hlacocluster_ecocluster_map, on="cluster")
         # reorder columns, putting ecocluster first
         pdf_ecocluster_tcrs = pdf_ecocluster_tcrs[["ecocluster"] +
                                                   [c for c in pdf_ecocluster_tcrs.columns
@@ -1020,7 +1020,7 @@ class ECOclusteringAgglomerative(ISparkDatasetJob):
     schema = StructType(
         [
             StructField(name="ecocluster", dataType=StringType(), nullable=False),
-            StructField(name="tacc", dataType=StringType(), nullable=False),
+            StructField(name="hlacocluster", dataType=StringType(), nullable=False),
             StructField(name="hla", dataType=StringType(), nullable=False),
             StructField(name="bioIdentity", dataType=StringType(), nullable=False),
         ]
@@ -1046,7 +1046,7 @@ class ECOclusteringAgglomerative(ISparkDatasetJob):
                             strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                         ),
                         InputRequirement(
-                            name="tacc_names",
+                            name="hlacocluster_names",
                             dataset=f"ecoclusters.tacc_names.hladb-v8-fdr-{1e-3}.parquet",
                             path="/parquet/*/",
                             strategy=DatasetResolverStrategy.MATCH_OUTPUT,
@@ -1054,12 +1054,12 @@ class ECOclusteringAgglomerative(ISparkDatasetJob):
                     ] +
                     [
                         InputRequirement(
-                            name=f"{clean_allele(allele)}_taccs",
+                            name=f"{clean_allele(allele)}_hlacoclusters",
                             dataset=f"taccs.hladb-v8-{clean_allele(allele)}-fdr-{1e-3}.parquet",
                             path="/parquet/*/",
                             strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                         )
-                        for allele in V8_HLA_ALLELES_WITH_TACCS
+                        for allele in V8_HLA_ALLELES_WITH_HLACOCLUSTERS
                     ]
                 )
             )
@@ -1075,11 +1075,11 @@ class ECOclusteringAgglomerative(ISparkDatasetJob):
             raise ValueError("Version not implemented")
 
     # duplicated. refactor
-    def get_tacc_tcrs(self, request: SparkDatasetJobRequest) -> pd.DataFrame:
+    def get_hlacocluster_tcrs(self, request: SparkDatasetJobRequest) -> pd.DataFrame:
         if self.version == "V8":
-            alleles = V8_HLA_ALLELES_WITH_TACCS
+            alleles = V8_HLA_ALLELES_WITH_HLACOCLUSTERS
         elif self.version == "V5":
-            alleles = V5_HLA_ALLELES_WITH_TACCS
+            alleles = V5_HLA_ALLELES_WITH_HLACOCLUSTERS
         else:
             raise ValueError("Version not implemented")
 
@@ -1087,7 +1087,7 @@ class ECOclusteringAgglomerative(ISparkDatasetJob):
 
         for allele in alleles:
             pdfs.append(
-                request.get(f"{clean_allele(allele)}_taccs")
+                request.get(f"{clean_allele(allele)}_hlacoclusters")
                 .withColumn("bioIdentity", F.explode(F.col('members')))
                 .drop('members')
                 .withColumn('hla', F.lit(allele))
@@ -1101,16 +1101,16 @@ class ECOclusteringAgglomerative(ISparkDatasetJob):
         node_connectivity = request.get("clustering_tree").toPandas()
         node_connectivity = node_connectivity.sort_values(by='row_index')
 
-        tacc_names_in_order = get_tacc_names(request)
-        tacc_tcrs = (
-            self.get_tacc_tcrs(request)
-            .rename(columns={"tacc": "cluster"})
+        hlacocluster_names_in_order = get_hlacocluster_names(request)
+        hlacocluster_tcrs = (
+            self.get_hlacocluster_tcrs(request)
+            .rename(columns={"hlacocluster": "cluster"})
         )
 
         ecocluster_tcrs = (
             EcoclusterConstructor(max_distance=self.max_distance)
-            .cluster_ecoclusters(node_connectivity, tacc_names_in_order, tacc_tcrs)
-            .rename(columns={"cluster": "tacc"})
+            .cluster_ecoclusters(node_connectivity, hlacocluster_names_in_order, hlacocluster_tcrs)
+            .rename(columns={"cluster": "hlacocluster"})
         )
 
         return spark.createDataFrame(
@@ -1119,13 +1119,13 @@ class ECOclusteringAgglomerative(ISparkDatasetJob):
         )
 
 
-def parent_map(node_connectivity: pd.DataFrame, n_taccs: int):
+def parent_map(node_connectivity: pd.DataFrame, n_hlacoclusters: int):
     parent = dict()
     for row in node_connectivity.itertuples():
-        if row.child_1 >= n_taccs: 
-            parent[row.child_1 - n_taccs] = row.row_index
-        if row.child_2 >= n_taccs:
-            parent[row.child_2 - n_taccs] = row.row_index
+        if row.child_1 >= n_hlacoclusters: 
+            parent[row.child_1 - n_hlacoclusters] = row.row_index
+        if row.child_2 >= n_hlacoclusters:
+            parent[row.child_2 - n_hlacoclusters] = row.row_index
     return parent
 
 def compressed_parent_map(parents, cuts):
@@ -1157,7 +1157,7 @@ class ECOclusteringElbows(ISparkDatasetJob):
             StructField(name="cut", dataType=LongType(), nullable=True),
             StructField(name="parent_cut", dataType=LongType(), nullable=True),
             StructField(name="depth", dataType=LongType(), nullable=False),
-            StructField(name="tacc", dataType=StringType(), nullable=False),
+            StructField(name="hlacocluster", dataType=StringType(), nullable=False),
             StructField(name="hla", dataType=StringType(), nullable=False),
             StructField(name="bioIdentity", dataType=StringType(), nullable=False),
         ]
@@ -1183,7 +1183,7 @@ class ECOclusteringElbows(ISparkDatasetJob):
                         strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                     ),
                     InputRequirement(
-                        name="tacc_names",
+                        name="hlacocluster_names",
                         dataset=f"ecoclusters.tacc_names.hladb-v8-fdr-{1e-3}.parquet",
                         path="/parquet/*/",
                         strategy=DatasetResolverStrategy.MATCH_OUTPUT,
@@ -1191,22 +1191,22 @@ class ECOclusteringElbows(ISparkDatasetJob):
                 ] +
                 [
                     InputRequirement(
-                        name=f"{clean_allele(allele)}_taccs",
+                        name=f"{clean_allele(allele)}_hlacoclusters",
                         dataset=f"taccs.hladb-v8-{clean_allele(allele)}-fdr-{1e-3}.parquet",
                         path="/parquet/*/",
                         strategy=DatasetResolverStrategy.MATCH_OUTPUT,
                     )
-                    for allele in V8_HLA_ALLELES_WITH_TACCS
+                    for allele in V8_HLA_ALLELES_WITH_HLACOCLUSTERS
                 ]
             )
         )
 
-    def get_tacc_tcrs(self, request: SparkDatasetJobRequest) -> pd.DataFrame:
+    def get_hlacocluster_tcrs(self, request: SparkDatasetJobRequest) -> pd.DataFrame:
         pdfs = []
 
-        for allele in V8_HLA_ALLELES_WITH_TACCS:
+        for allele in V8_HLA_ALLELES_WITH_HLACOCLUSTERS:
             pdfs.append(
-                request.get(f"{clean_allele(allele)}_taccs")
+                request.get(f"{clean_allele(allele)}_hlacoclusters")
                 .withColumn("bioIdentity", F.explode(F.col('members')))
                 .drop('members')
                 .withColumn('hla', F.lit(allele))
@@ -1215,92 +1215,92 @@ class ECOclusteringElbows(ISparkDatasetJob):
 
         return pd.concat(pdfs)
 
-    def walk_tree(self, node_connectivity: pd.DataFrame, tacc_names: List[str]) -> Tuple[Dict[str, List[float]], Dict[str, List[int]]]:
-        n_leaf_nodes = len(tacc_names)
-        clusters_at_idxs = [[t] for t in tacc_names]
+    def walk_tree(self, node_connectivity: pd.DataFrame, hlacocluster_names: List[str]) -> Tuple[Dict[str, List[float]], Dict[str, List[int]]]:
+        n_leaf_nodes = len(hlacocluster_names)
+        clusters_at_idxs = [[t] for t in hlacocluster_names]
 
-        tacc_correlations = defaultdict(list)
-        tacc_paths = defaultdict(list)
+        hlacocluster_correlations = defaultdict(list)
+        hlacocluster_paths = defaultdict(list)
 
         # walk up the tree, left to right at each level
         for _, row in node_connectivity.iterrows():
-            cluster_tacc_lists_bothcols = []
+            cluster_hlacocluster_lists_bothcols = []
 
             # step down one level
             for col in ["child_1", "child_2"]:
                 cluster_idx = int(row[col])
                 if cluster_idx == -1:
-                    this_tacc_list = []
+                    this_hlacocluster_list = []
                 else:
-                    this_tacc_list = clusters_at_idxs[cluster_idx]
-                cluster_tacc_lists_bothcols.append(this_tacc_list)
+                    this_hlacocluster_list = clusters_at_idxs[cluster_idx]
+                cluster_hlacocluster_lists_bothcols.append(this_hlacocluster_list)
 
-            cluster_child1_taccs, cluster_child2_taccs = cluster_tacc_lists_bothcols
+            cluster_child1_hlacoclusters, cluster_child2_hlacoclusters = cluster_hlacocluster_lists_bothcols
 
-            # hold all the taccs in this cluster
-            clusters_at_idxs.append(cluster_child1_taccs + cluster_child2_taccs)
+            # hold all the HLA-COclusters in this cluster
+            clusters_at_idxs.append(cluster_child1_hlacoclusters + cluster_child2_hlacoclusters)
 
-            for tacc in cluster_child1_taccs + cluster_child2_taccs:
-                tacc_correlations[tacc] = [1 - row["distance"]] + tacc_correlations[tacc]
-                tacc_paths[tacc] = [int(row.row_index)] + tacc_paths[tacc]
+            for hlacocluster in cluster_child1_hlacoclusters + cluster_child2_hlacoclusters:
+                hlacocluster_correlations[hlacocluster] = [1 - row["distance"]] + hlacocluster_correlations[hlacocluster]
+                hlacocluster_paths[hlacocluster] = [int(row.row_index)] + hlacocluster_paths[hlacocluster]
 
-        return tacc_correlations, tacc_paths
+        return hlacocluster_correlations, hlacocluster_paths
 
-    def cut_at_max_2nd_deriv(self, tacc_correlations: Dict[str, List[float]], tacc_paths:Dict[str, List[int]], min_2nd_deriv:Optional[float]=None) -> Dict[str, int]:
+    def cut_at_max_2nd_deriv(self, hlacocluster_correlations: Dict[str, List[float]], hlacocluster_paths:Dict[str, List[int]], min_2nd_deriv:Optional[float]=None) -> Dict[str, int]:
         cuts = dict()
 
-        for tacc, corrs in tacc_correlations.items():
-            path = tacc_paths[tacc]
+        for hlacocluster, corrs in hlacocluster_correlations.items():
+            path = hlacocluster_paths[hlacocluster]
             second = np.diff(np.diff(corrs))
             idx = np.argmax(second)
             max_second = second[idx]
             if min_2nd_deriv and max_second < min_2nd_deriv:
                 continue
             cut = path[idx + 2]  # align with center of second derivative
-            cuts[tacc] = cut
+            cuts[hlacocluster] = cut
 
         return cuts
 
-    def cuts_to_clusters(self, clustering_tree: pd.DataFrame, cuts: List[int], tacc_names: List[str]):
-        clusters_at_idxs = [[t] for t in tacc_names]
+    def cuts_to_clusters(self, clustering_tree: pd.DataFrame, cuts: List[int], hlacocluster_names: List[str]):
+        clusters_at_idxs = [[t] for t in hlacocluster_names]
 
         for _, row in clustering_tree.iterrows():
-            cluster_tacc_lists_bothcols = []
+            cluster_hlacocluster_lists_bothcols = []
 
             # step down one level
             for col in ["child_1", "child_2"]:
                 cluster_idx = int(row[col])
-                this_tacc_list = clusters_at_idxs[cluster_idx]
-                cluster_tacc_lists_bothcols.append(this_tacc_list)
+                this_hlacocluster_list = clusters_at_idxs[cluster_idx]
+                cluster_hlacocluster_lists_bothcols.append(this_hlacocluster_list)
 
-            cluster_child1_taccs, cluster_child2_taccs = cluster_tacc_lists_bothcols
+            cluster_child1_hlacoclusters, cluster_child2_hlacoclusters = cluster_hlacocluster_lists_bothcols
 
-            # hold all the taccs in this cluster
-            clusters_at_idxs.append(cluster_child1_taccs + cluster_child2_taccs)
+            # hold all the HLA-COclusters in this cluster
+            clusters_at_idxs.append(cluster_child1_hlacoclusters + cluster_child2_hlacoclusters)
 
-        clusters = pd.DataFrame({"cut":cuts, "taccs":[clusters_at_idxs[i + len(tacc_names)] for i in cuts]})
+        clusters = pd.DataFrame({"cut":cuts, "hlacoclusters":[clusters_at_idxs[i + len(hlacocluster_names)] for i in cuts]})
         return clusters
 
-    def cut_elbows(self, clustering_tree: pd.DataFrame, tacc_names: List[str]) -> pd.DataFrame:
-        compressed_tacc_correlations, compressed_tacc_paths = self.walk_tree(
-            clustering_tree, tacc_names
+    def cut_elbows(self, clustering_tree: pd.DataFrame, hlacocluster_names: List[str]) -> pd.DataFrame:
+        compressed_hlacocluster_correlations, compressed_hlacocluster_paths = self.walk_tree(
+            clustering_tree, hlacocluster_names
         )
 
         cuts = self.cut_at_max_2nd_deriv(
-            compressed_tacc_correlations, compressed_tacc_paths, self.min_second_deriv
+            compressed_hlacocluster_correlations, compressed_hlacocluster_paths, self.min_second_deriv
         )
 
-        clusters = self.cuts_to_clusters(clustering_tree, list(cuts.values()), tacc_names)
+        clusters = self.cuts_to_clusters(clustering_tree, list(cuts.values()), hlacocluster_names)
 
-        clusters["len_taccs"] = [len(t) for t in clusters["taccs"]]
+        clusters["len_hlacoclusters"] = [len(t) for t in clusters["hlacoclusters"]]
         return clusters
 
-    def name_clusters(self, ecoclusters: pd.DataFrame, clustering_tree: pd.DataFrame, n_taccs: int) -> pd.DataFrame:
+    def name_clusters(self, ecoclusters: pd.DataFrame, clustering_tree: pd.DataFrame, n_hlacoclusters: int) -> pd.DataFrame:
         cuts = frozenset(ecoclusters['cut'].tolist())
-        parents = compressed_parent_map(parent_map(clustering_tree, n_taccs), cuts)
+        parents = compressed_parent_map(parent_map(clustering_tree, n_hlacoclusters), cuts)
         names = dict()
 
-        for row in ecoclusters.sort_values(by='len_taccs', ascending=False).itertuples():
+        for row in ecoclusters.sort_values(by='len_hlacoclusters', ascending=False).itertuples():
             node = row.cut
             if node in names:
                 continue 
@@ -1333,12 +1333,12 @@ class ECOclusteringElbows(ISparkDatasetJob):
 
         return ecoclusters
 
-    def get_singletons(self, tacc_names_in_order: List[str], ecoclusters: pd.DataFrame) -> pd.DataFrame:
-        clustered_taccs = set(itertools.chain.from_iterable(ecoclusters.taccs.tolist()))
-        unclustered_taccs = [t for t in tacc_names_in_order if t not in clustered_taccs]
-        names = [f"e-{t}" for t in unclustered_taccs]
+    def get_singletons(self, hlacocluster_names_in_order: List[str], ecoclusters: pd.DataFrame) -> pd.DataFrame:
+        clustered_hlacoclusters = set(itertools.chain.from_iterable(ecoclusters.hlacoclusters.tolist()))
+        unclustered_hlacoclusters = [t for t in hlacocluster_names_in_order if t not in clustered_hlacoclusters]
+        names = [f"e-{t}" for t in unclustered_hlacoclusters]
 
-        singletons = pd.DataFrame({"ecocluster":names, "cut":None, "parent_cut":None, "depth":0, "taccs": [[t] for t in unclustered_taccs]})
+        singletons = pd.DataFrame({"ecocluster":names, "cut":None, "parent_cut":None, "depth":0, "hlacoclusters": [[t] for t in unclustered_hlacoclusters]})
         return singletons
 
     def transform(self, request: SparkDatasetJobRequest) -> DataFrame:
@@ -1347,23 +1347,23 @@ class ECOclusteringElbows(ISparkDatasetJob):
         node_connectivity = request.get("clustering_tree").toPandas()
         node_connectivity = node_connectivity.sort_values(by='row_index')
 
-        tacc_names_in_order = get_tacc_names(request)
-        tacc_tcrs = self.get_tacc_tcrs(request)
+        hlacocluster_names_in_order = get_hlacocluster_names(request)
+        hlacocluster_tcrs = self.get_hlacocluster_tcrs(request)
 
         logger.info("Cutting elbows")
-        ecoclusters = self.cut_elbows(node_connectivity, tacc_names_in_order)
+        ecoclusters = self.cut_elbows(node_connectivity, hlacocluster_names_in_order)
 
         logger.info("Naming clusters")
-        ecoclusters = self.name_clusters(ecoclusters, node_connectivity, len(tacc_names_in_order))
+        ecoclusters = self.name_clusters(ecoclusters, node_connectivity, len(hlacocluster_names_in_order))
 
-        logger.info("Adding singletons taccs")
-        singletons = self.get_singletons(tacc_names_in_order, ecoclusters)
+        logger.info("Adding singletons HLA-COclusters")
+        singletons = self.get_singletons(hlacocluster_names_in_order, ecoclusters)
         ecoclusters = pd.concat([ecoclusters, singletons])
 
         ecocluster_tcrs = (
-            ecoclusters.explode('taccs')
-            .rename(columns={'taccs':'tacc'})
-            .merge(tacc_tcrs, on="tacc")[["ecocluster", "cut", "parent_cut", "depth", "tacc", "hla", "bioIdentity"]]
+            ecoclusters.explode('hlacoclusters')
+            .rename(columns={'hlacoclusters':'hlacocluster'})
+            .merge(hlacocluster_tcrs, on="hlacocluster")[["ecocluster", "cut", "parent_cut", "depth", "hlacocluster", "hla", "bioIdentity"]]
             .drop_duplicates()
         )
 
@@ -1386,7 +1386,7 @@ class ECOclusteringTopElbows(ISparkDatasetJob):
     schema = StructType(
         [
             StructField(name="ecocluster", dataType=StringType(), nullable=False),
-            StructField(name="tacc", dataType=StringType(), nullable=False),
+            StructField(name="hlacocluster", dataType=StringType(), nullable=False),
             StructField(name="hla", dataType=StringType(), nullable=False),
             StructField(name="bioIdentity", dataType=StringType(), nullable=False),
         ]
@@ -1421,7 +1421,7 @@ class ECOclusteringTopElbows(ISparkDatasetJob):
 
         not_nested = (
             nested.where(F.col("depth") == 0)
-            .select("ecocluster", "tacc", "hla", "bioIdentity")
+            .select("ecocluster", "hlacocluster", "hla", "bioIdentity")
         )
 
         return not_nested

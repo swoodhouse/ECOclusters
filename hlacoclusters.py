@@ -24,7 +24,7 @@ from pyspark.sql.types import (
 
 logger = logging.getLogger(__name__)
 
-V8_HLA_ALLELES_WITH_TACCS = [
+V8_HLA_ALLELES_WITH_HLACOCLUSTERS = [
     'A*01:01',
     'A*02:01',
     'A*02:02',
@@ -240,9 +240,9 @@ def svd(array, n_components, n_discard):
     return u, vt.T
 
 
-class ClusterTACCs(ISparkDatasetJob):  ## YES!
+class ClusterHlaCoclusters(ISparkDatasetJob):  ## YES!
     description = """
-    For a specific allele, build TACCs from HLAdb v8. Clustering is done in driver node,
+    For a specific allele, build HLA-COclusters from HLAdb v8. Clustering is done in driver node,
     so large number of executors is not required.
     """
     author = DatasetEmail("swoodhouse@adaptivebiotech.com")
@@ -256,7 +256,7 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
     fdr_cutoff = 1e-3
 
     schema = StructType([
-        StructField('tacc', StringType(), True),
+        StructField('hlacocluster', StringType(), True),
         StructField('hla', StringType(), True),
         StructField('members', ArrayType(StringType()), True),
     ])
@@ -411,7 +411,7 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
 
         return X_count_matrix, bioids, samples_to_cluster
 
-    def cluster_taccs(
+    def cluster_hlacoclusters(
         self,
         X_count_matrix: sparse.csr_matrix,
         bioids: List[str],
@@ -444,7 +444,7 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
             if len(iii) >= self.min_tcrs_per_cluster:
                 bioid_clusters.append([str(esi) for esi in bioids[iii]])
 
-        logger.info("cluster_taccs() complete")
+        logger.info("cluster_hlacoclusters() complete")
         return bioid_clusters
 
     def name_cluster(self, i: int) -> str:
@@ -460,8 +460,8 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
         X_count_matrix, bioids, hla_counted_sample_names = self.hla_restrict_countmatrix_bioids(
             X_count_matrix, X_hla[:, hla_index], bioids, hla_counted_sample_names)
 
-        logger.info("Calling cluster_taccs...")
-        bioid_clusters = self.cluster_taccs(
+        logger.info("Calling cluster_hlacoclusters...")
+        bioid_clusters = self.cluster_hlacoclusters(
             X_count_matrix,
             bioids,
         )
@@ -474,7 +474,7 @@ class ClusterTACCs(ISparkDatasetJob):  ## YES!
 
         clusters = spark.createDataFrame(
             pd.DataFrame.from_dict({  # type: ignore
-                "tacc": cluster_names,
+                "hlacocluster": cluster_names,
                 "hla": self.allele,
                 "members": bioid_clusters,
             })

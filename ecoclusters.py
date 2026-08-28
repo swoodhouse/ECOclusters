@@ -1,11 +1,9 @@
-from typing import List, Tuple, Set, Callable, Any, Optional, Dict
+from typing import List, Tuple, Set, Optional, Dict
 import logging
 import pandas as pd
 import numpy as np
-import numpy.typing as npt
-from hdbscan import HDBSCAN
-import umap
 from collections import defaultdict
+from hlacoclusters import V8_HLA_ALLELES_WITH_HLACOCLUSTERS
 
 from scipy.sparse import hstack, coo_matrix, csr_matrix, identity, triu
 import scipy.cluster.hierarchy as hc
@@ -18,26 +16,25 @@ from pyspark.sql.types import (
     StringType,
     StructField,
     StructType,
-    ArrayType,
     FloatType,
     DoubleType,
 )
 
 
-from immunopipeline.ecocluster._ecocluster import (
-    EcoclusterConstructor,  ##MUSTHAVE
-    sparse_map_nonzero, ##MUSTHAVE
-    masked_correlation, ##MUSTHAVE
-    build_hlacocluster_mask # can't import from contrib  ##MUSTHAVE
+from ecoclusters_extras import (
+    EcoclusterConstructor,
+    sparse_map_nonzero,
+    masked_correlation,
+    build_hlacocluster_mask
 )
 
 from scipy.stats import percentileofscore
 
-from immunopipeline.ecocluster.exact_linkage import exact_linkage  ##MUSTHAVE
+from exact_linkage import exact_linkage 
 
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -54,7 +51,6 @@ class HlaCoclusterNames(ISparkDatasetJob):
     description = """
     Gives the ordered list of HLA-COclusters, for indexing the correlation matrix.
     """
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     schema = StructType(
         [
@@ -88,8 +84,6 @@ class HlaCoclusterNames(ISparkDatasetJob):
     def output(self) -> str:
         if self.version == "V8":
             return f"ecoclusters.tacc_names.hladb-v8-fdr-{1e-3}.parquet"
-        elif self.version == "V5":
-            return "ecoclusters.tacc_names.hladb-v5.parquet"
         else:
             raise ValueError("Version not implemented")
 
@@ -120,7 +114,6 @@ class CountHlaCoclusters(ISparkDatasetJob):
     description = """
     Sparse samples x HLA-COcluster count matrix.
     """
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     schema = StructType(
         [
@@ -135,8 +128,6 @@ class CountHlaCoclusters(ISparkDatasetJob):
 
         if version == "V8":
             self.ALLELES = V8_HLA_ALLELES_WITH_HLACOCLUSTERS
-        elif version == "V5":
-            self.ALLELES = V5_HLA_ALLELES_WITH_HLACOCLUSTERS
         super().__init__()
 
     def inputs(self) -> DatasetInputRequirements:
@@ -171,45 +162,12 @@ class CountHlaCoclusters(ISparkDatasetJob):
                     ]
                 )
             )
-        elif self.version == "V5":
-            return DatasetInputRequirements(
-                tuple(
-                    [
-                        InputRequirement(
-                            name="hlas",
-                            dataset="repertoire.samples.taccs-hladb-v5.hlas.parquet",
-                            path="/parquet/*/",
-                            strategy=DatasetResolverStrategy.MATCH_OUTPUT,
-                        )
-                    ] +
-                    [
-                        InputRequirement(
-                            name=f"{clean_allele(allele)}_hlacoclusters",
-                            dataset=f"taccs.hladb-v5-{clean_allele(allele)}.parquet",
-                            path="/parquet/*/",
-                            strategy=DatasetResolverStrategy.MATCH_OUTPUT,
-                        )
-                        for allele in V5_HLA_ALLELES_WITH_HLACOCLUSTERS
-                    ] +
-                    [
-                        InputRequirement(
-                            name=f"{clean_allele(allele)}_filteredseqs",
-                            dataset=f"repertoire.sequences.hladb-v5-filteredseqs-{clean_allele(allele)}.parquet",
-                            path="/parquet/*/",
-                            strategy=DatasetResolverStrategy.MATCH_OUTPUT,
-                        )
-                        for allele in V5_HLA_ALLELES_WITH_HLACOCLUSTERS
-                    ]
-                )
-            )
         else:
             raise ValueError("Version not implemented")
 
     def output(self) -> str:
         if self.version == "V8":
             return f"ecoclusters.count_matrix.hladb-v8-lowestfdr-{1e-3}.parquet"
-        elif self.version == "V5":
-            return "ecoclusters.count_matrix.hladb-v5.parquet"
         else:
             raise ValueError("Version not implemented")
 
@@ -346,31 +304,6 @@ def clustering_rcd_inputs(version: str):
                 ]
             )
         )
-    elif version == "V5":
-        return DatasetInputRequirements(
-            tuple(
-                [
-                    InputRequirement(
-                        name="hlas",
-                        dataset="repertoire.samples.hladb-v5-hlas.parquet",  # WE NEED TO SWITCH THIS OUT FOR THESE SAME SAMPLES BUT WITH V5 ALLELES!
-                        path="/parquet/*/",
-                        strategy=DatasetResolverStrategy.MATCH_OUTPUT,
-                    ),
-                    InputRequirement(
-                        name="count_matrix",
-                        dataset="ecoclusters.count_matrix.hladb-v5.parquet",
-                        path="/parquet/*/",
-                        strategy=DatasetResolverStrategy.MATCH_OUTPUT,
-                    ),
-                    InputRequirement(
-                        name="hlacocluster_names",
-                        dataset="ecoclusters.tacc_names.hladb-v5.parquet",
-                        path="/parquet/*/",
-                        strategy=DatasetResolverStrategy.MATCH_OUTPUT,
-                    )
-                ]
-            )
-        )
     else:
         raise ValueError("Version not implemented")
 
@@ -460,7 +393,6 @@ class HlaCoclusterMask(ISparkDatasetJob):
     this sample has the HLA corresponding to this HLA-COcluster, 0
     means it does not.
     """
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     version = "V8"
 
@@ -502,7 +434,6 @@ class CorrelationMatrix(ISparkDatasetJob):
     description ="""
     Builds HLA-COcluster x HLA-COcluster sparse HLA-masked correlation matrix.
     """
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     version = "V8"
     min_shared_samples = 10
@@ -559,7 +490,6 @@ class CorrelationMatrixWithNaNs(ISparkDatasetJob):
     Builds HLA-COcluster x HLA-COcluster sparse HLA-masked correlation matrix, with NaNs
     where a pair of HLA-COclusters do not share enough HLA-matched donors, instead of 0.
     """
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     version = "V8"
     min_shared_samples = 0
@@ -625,10 +555,9 @@ class CorrelationMatrixWithNaNs(ISparkDatasetJob):
 
 class ECOclusteringTree(ISparkDatasetJob):
     description = """
-    Build ECOClusters from V8 or V5 HLAdb HLA-COclusters. Clustering is done on driver node.
+    Build ECOClusters from V8 HLAdb HLA-COclusters. Clustering is done on driver node.
     No executors are required, but a large amount of driver RAM is.
     """
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     min_shared_samples_correlation = 10
 
@@ -656,8 +585,6 @@ class ECOclusteringTree(ISparkDatasetJob):
     def output(self) -> str:
         if self.version == "V8":
             return f"ecoclusters.clustering-tree.hladb-v8-fdr-{1e-3}-min_shared_samples-{self.min_shared_samples_correlation}.parquet"
-        if self.version == "V5":
-            return "ecoclusters.clustering-tree.hladb-v5.parquet"
         else:
             raise ValueError("Version not implemented")
 
@@ -695,12 +622,11 @@ class ECOclusteringTree(ISparkDatasetJob):
 
 class ECOclusteringExactTree(ISparkDatasetJob):
     description = """
-    Build ECOClustering agglomerative clustering tree from V8 or V5 HLAdb HLA-COclusters. Clustering is done on driver node.
+    Build ECOClustering agglomerative clustering tree from V8 HLAdb HLA-COclusters. Clustering is done on driver node.
     No executors are required, but a large amount of driver RAM is.
     This RCD computes the exact average correlation distances at each level of the tree rather
     than using average linkage.
     """
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     min_shared_samples_correlation = 20
 
@@ -987,7 +913,6 @@ class ECOclusteringAgglomerative(ISparkDatasetJob):
     description = """
     ...
     """
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     max_distance = 0.4 # 0.4-0.8
     min_shared_samples_correlation = 10
@@ -1044,8 +969,6 @@ class ECOclusteringAgglomerative(ISparkDatasetJob):
     def output(self) -> str:
         if self.version == "V8":
             return f"ecoclusters.agglomerative-clustering.hladb-v8-lowestfdr-{1e-3}-min_shared_samples-{self.min_shared_samples_correlation}-maxdistance-{self.max_distance}.parquet"
-        if self.version == "V5":
-            return f"ecoclusters.agglomerative-clustering.hladb-v5-maxdistance-{self.max_distance}.parquet"
         else:
             raise ValueError("Version not implemented")
 
@@ -1053,8 +976,6 @@ class ECOclusteringAgglomerative(ISparkDatasetJob):
     def get_hlacocluster_tcrs(self, request: SparkDatasetJobRequest) -> pd.DataFrame:
         if self.version == "V8":
             alleles = V8_HLA_ALLELES_WITH_HLACOCLUSTERS
-        elif self.version == "V5":
-            alleles = V5_HLA_ALLELES_WITH_HLACOCLUSTERS
         else:
             raise ValueError("Version not implemented")
 
@@ -1121,7 +1042,6 @@ class ECOclusteringElbows(ISparkDatasetJob):
     description = """
     Cut the agglomerative clustering tree at local "elbow" points, rather than at a uniform fixed distance.
     """
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     min_shared_samples_correlation = 20
     min_second_deriv = 0.05  # vary this
@@ -1353,7 +1273,6 @@ class ECOclusteringTopElbows(ISparkDatasetJob):
     Drop all nested elbows, keeping only the top ones as our "ecoclusters"
     """
 
-    author = DatasetEmail("swoodhouse@adaptivebiotech.com")
 
     min_shared_samples_correlation = 20
     min_second_deriv = 0.05

@@ -17,16 +17,6 @@ from immunopipeline.hla import clean_allele
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MIN_MEMBERS: int = 1
-# this is just a meaninglessly high number. It's a count of HLA-COclusters, not TCRs.
-DEFAULT_MAX_MEMBERS: int = 20000
-
-# Default maximum mean HLA-COclusters per HLA when creating new clusters.
-# Setting this to an impossibly high number so that no splitting is done.
-DEFAULT_MAX_MEAN_HLACOCLUSTERS_PER_HLA_FORCREATE: float = 1000.0
-# Default maximum mean HLA-COclusters per HLA when splitting clusters.
-DEFAULT_MAX_MEAN_HLACOCLUSTERS_PER_HLA_FORSPLIT: float = 1.5
-
 
 def sparse_map_nonzero(m: csr_matrix, f: Callable[[Any], Any]) -> csr_matrix:  # type: ignore
     """
@@ -165,22 +155,13 @@ def build_hlacocluster_mask(metas: pd.DataFrame, hlacocluster_names: List[str]) 
 class EcoclusterConstructor:
     def __init__(
         self,
-        min_members: int = DEFAULT_MIN_MEMBERS,
-        max_members: int = DEFAULT_MAX_MEMBERS,
         max_distance: ty.Optional[float] = None,
-        max_mean_hlacoclusters_per_hla: float = DEFAULT_MAX_MEAN_HLACOCLUSTERS_PER_HLA_FORCREATE,
     ) -> None:
         """
         Args:
-            min_members (int, optional): Minimum HLA-COclusters to combine. Defaults to DEFAULT_MIN_MEMBERS.
-            max_members (int, optional): Maximum HLA-COclusters to combine. Defaults to DEFAULT_MAX_MEMBERS.
             max_distance (float, optional): Maximum distance in the tree to combine. Defaults to None.
-            max_mean_hlacoclusters_per_hla (float, optional): Maximum mean HLA-COclusters per HLA. Defaults to DEFAULT_MAX_MEAN_HLACOCLUSTERS_PER_HLA.
         """
-        self.min_members = min_members
-        self.max_members = max_members
         self.max_distance = max_distance
-        self.max_mean_hlacoclusters_per_hla = max_mean_hlacoclusters_per_hla
 
     def cluster_ecoclusters(
         self,
@@ -192,10 +173,6 @@ class EcoclusterConstructor:
         Construct ECOClusters, in a cross-HLA clustering-of-clusters setting. Steps:
 
         1. Walk up the tree accumulating clusters
-        2. Walk down the tree in descending-sorted distance order. Return the first cluster
-        encountered, for each TCR, that satisfies min_members (minimum number of HLA-COclusters
-        subsumed), max_members (ditto but maximum) max_distance (maximum distance) and
-        max_mean_hlacoclusters_per_hla (maximum mean # HLA-COclusters per HLA).
         3. Annotate each cluster with its set of HLAs
 
         This class is capable of splitting ECOclusters at the first level in the tree at which
@@ -247,13 +224,6 @@ class EcoclusterConstructor:
         pdf_cluster_tree_distance_desc["mean_hlas_per_hlacocluster"] = (
             pdf_cluster_tree_distance_desc.n_hlacoclusters / pdf_cluster_tree_distance_desc.n_hlas
         )
-
-        # filter the tree on distance and mean HLAs per HLA-COcluster
-        pdf_cluster_tree_distance_desc = pdf_cluster_tree_distance_desc[
-            (pdf_cluster_tree_distance_desc.mean_hlas_per_hlacocluster <= self.max_mean_hlacoclusters_per_hla)
-            & (pdf_cluster_tree_distance_desc.n_hlacoclusters <= self.max_members)
-            & (pdf_cluster_tree_distance_desc.n_hlacoclusters >= self.min_members)
-        ]
 
         cluster_hlacocluster_members = []
         cluster_distances = []

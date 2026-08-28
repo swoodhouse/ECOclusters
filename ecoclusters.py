@@ -50,11 +50,6 @@ DEFAULT_MAX_MEMBERS: int = 20000
 
 logger = logging.getLogger(__name__)
 
-V5_HLA_ALLELES_WITH_HLACOCLUSTERS = [
-    x for x in V5_HLA_ALLELES if
-    x not in ["B*35:02", "B*39:10", "B*44:05", "B*58:02", "DPA1*01:03+DPB1*01:01", "DPA1*02:01+DPB1*03:01", "DPA1*02:01+DPB1*11:01", "DQA1*01:03+DQB1*06:09", "DRB1*16:01", "DRB1*16:02"]
-]
-
 class HlaCoclusterNames(ISparkDatasetJob):
     description = """
     Gives the ordered list of HLA-COclusters, for indexing the correlation matrix.
@@ -71,44 +66,24 @@ class HlaCoclusterNames(ISparkDatasetJob):
     def __init__(self, version: str) -> None:
         self.version = version
 
-        if version == "V8":
-            self.ALLELES = V8_HLA_ALLELES_WITH_HLACOCLUSTERS
-        elif version == "V5":
-            self.ALLELES = V5_HLA_ALLELES_WITH_HLACOCLUSTERS
+        self.ALLELES = V8_HLA_ALLELES_WITH_HLACOCLUSTERS
 
         super().__init__()
 
     def inputs(self) -> DatasetInputRequirements:
-        if self.version == "V8":
-            return DatasetInputRequirements(
-                tuple(
-                    [
-                        InputRequirement(
-                            name=f"{clean_allele(allele)}_hlacoclusters",
-                            dataset=f"taccs.hladb-v8-{clean_allele(allele)}-fdr-{1e-3}.parquet",
-                            path="/parquet/*/",
-                            strategy=DatasetResolverStrategy.MATCH_OUTPUT,
-                        )
-                        for allele in V8_HLA_ALLELES_WITH_HLACOCLUSTERS
-                    ]
-                )
+        return DatasetInputRequirements(
+            tuple(
+                [
+                    InputRequirement(
+                        name=f"{clean_allele(allele)}_hlacoclusters",
+                        dataset=f"taccs.hladb-v8-{clean_allele(allele)}-fdr-{1e-3}.parquet",
+                        path="/parquet/*/",
+                        strategy=DatasetResolverStrategy.MATCH_OUTPUT,
+                    )
+                    for allele in V8_HLA_ALLELES_WITH_HLACOCLUSTERS
+                ]
             )
-        elif self.version == "V5":
-            return DatasetInputRequirements(
-                tuple(
-                    [
-                        InputRequirement(
-                            name=f"{clean_allele(allele)}_hlacoclusters",
-                            dataset=f"taccs.hladb-v5-{clean_allele(allele)}.parquet",
-                            path="/parquet/*/",
-                            strategy=DatasetResolverStrategy.MATCH_OUTPUT,
-                        )
-                        for allele in V5_HLA_ALLELES_WITH_HLACOCLUSTERS
-                    ]
-                )
-            )
-        else:
-            raise ValueError("Version not implemented")
+        )
 
     def output(self) -> str:
         if self.version == "V8":

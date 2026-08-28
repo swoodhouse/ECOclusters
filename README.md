@@ -11,7 +11,7 @@ This repo provides the algorithm implementations used to build ECOclusters from 
 - [`taccs.py`](taccs.py) — construction of TCR Antigen-specific Correlated Clusters (TACCs), the building blocks that ECOclusters are assembled from, via biclustering and dimensionality reduction (SVD, UMAP, HDBSCAN) of TCR co-occurrence across repertoires.
 - [`ecoclusters.py`](ecoclusters.py) — the core ECOcluster construction pipeline: TACC co-occurrence and correlation matrices, hierarchical clustering of TACCs into a clustering tree, and the elbow-cutting procedure used to call ECOclusters from that tree.
 - [`ecoclusters_extras.py`](ecoclusters_extras.py) — supporting utilities for the pipeline above, including masked correlation, TACC masking, and cluster reporting.
-- [`exact_linkage.py`](exact_linkage.py) — exact hierarchical linkage implementation used in ECOcluster construction.
+- [`exact_linkage.py`](exact_linkage.py) / [`exact_linkage_cython.pyx`](exact_linkage_cython.pyx) — exact nearest-neighbor-chain hierarchical linkage used in ECOcluster construction, implemented in Cython for speed and built on first import via `pyximport`.
 
 Together, these implement all of the algorithms used to construct ECOclusters as described in the manuscript.
 
